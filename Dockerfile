@@ -80,4 +80,7 @@ RUN cd /app/peract && \
     # 使用 pip install -e 代替 setup.py develop，减少联网依赖错误
     pip install -e .
 
+# 9. YOLH: 安装额外依赖
+RUN pip install tensorboard
+
 WORKDIR /app/peract

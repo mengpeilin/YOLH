@@ -11,6 +11,8 @@ docker run -it \
     --shm-size=16gb \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v ~/EECS467/peract:/app/peract
+    -v ~/EECS467/peract:/app/peract \
+    -v ~/EECS467/train.py:/app/train.py \
+    -v ~/EECS467/data:/app/data \
     --name peract_dev \
     peract /bin/bash
