@@ -27,7 +27,10 @@ def main():
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
-    sessions = sorted([d for d in data_dir.iterdir() if d.is_dir()])
+    sessions = sorted([
+        d for d in data_dir.iterdir()
+        if d.is_dir() and d.name.startswith("rosbag")
+    ])
 
     for i, sess in enumerate(sessions):
         raw = sess / "raw.npz"

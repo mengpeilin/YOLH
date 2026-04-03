@@ -4,7 +4,7 @@ YOLH Data Processing Pipeline
 Usage:
     # Step 00 requires ROS2; run this script from a shell where ROS2 is sourced
     # and no conda environment is active.
-    python run_voxelization_pipeline.py \
+    python3 run_voxelization_pipeline.py \
         --input-dir /path/to/ros2bags \
         --output-dir data/ \
         --task-name pick_cup

@@ -17,7 +17,10 @@ def merge_episodes(
     coord_bounds = None
     voxel_size = None
 
-    session_dirs = sorted([d for d in data_dir.iterdir() if d.is_dir()])
+    session_dirs = sorted([
+        d for d in data_dir.iterdir()
+        if d.is_dir() and d.name.startswith("rosbag")
+    ])
     for sess_dir in session_dirs:
         ep_file = sess_dir / "episodes.npz"
         if not ep_file.exists():

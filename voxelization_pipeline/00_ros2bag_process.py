@@ -29,9 +29,12 @@ def main():
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
 
-    bag_dirs = sorted([d for d in input_dir.iterdir() if d.is_dir()])
+    bag_dirs = sorted([
+        d for d in input_dir.iterdir()
+        if d.is_dir() and d.name.startswith("rosbag")
+    ])
     if not bag_dirs:
-        if (input_dir / "metadata.yaml").exists():
+        if input_dir.name.startswith("rosbag") and (input_dir / "metadata.yaml").exists():
             bag_dirs = [input_dir]
         else:
             print(f"No ROS2 bag directories found in {input_dir}")

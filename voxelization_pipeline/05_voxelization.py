@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.voxelize_and_insert_gripper import build_training_episodes
+from scripts.voxelization import build_training_episodes
 
 
 def main():
@@ -22,7 +22,10 @@ def main():
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
-    sessions = sorted([d for d in data_dir.iterdir() if d.is_dir()])
+    sessions = sorted([
+        d for d in data_dir.iterdir()
+        if d.is_dir() and d.name.startswith("rosbag")
+    ])
 
     for i, sess in enumerate(sessions):
         raw = sess / "raw.npz"
