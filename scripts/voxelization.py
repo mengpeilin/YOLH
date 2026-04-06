@@ -10,6 +10,7 @@ SO101_URDF_PATH = os.path.join(
 
 
 _GRIPPER_MODEL_CACHE = {}
+_URDF_DATA_CACHE = None
 
 
 def rgbd_to_points(rgb, depth, intrinsic, mask=None):
@@ -208,121 +209,224 @@ def _collect_link_visual_meshes(link_elem):
     return meshes
 
 
-def _load_so101_gripper_points_in_frame(gripper_open, num_points):
-    cache_key = (bool(gripper_open), int(num_points))
-    if cache_key in _GRIPPER_MODEL_CACHE:
-        return _GRIPPER_MODEL_CACHE[cache_key]
+def _sample_link_points(link_elem, urdf_dir, n_samples, rng):
+    """Sample *n_samples* surface points from the visual meshes of a URDF link (link-local frame)."""
+    mesh_specs = _collect_link_visual_meshes(link_elem)
+    if not mesh_specs:
+        return np.zeros((0, 3), dtype=np.float64)
+    tri_counts, tri_list, tf_list = [], [], []
+    for mesh_file, t_mesh in mesh_specs:
+        mesh_path = _resolve_mesh_path(urdf_dir, mesh_file)
+        tri = _read_stl_triangles(mesh_path)
+        tri_counts.append(max(len(tri), 1))
+        tri_list.append(tri)
+        tf_list.append(t_mesh)
+    total = float(sum(tri_counts))
+    pts_all, assigned = [], 0
+    for i, tri in enumerate(tri_list):
+        cnt = (n_samples - assigned if i == len(tri_list) - 1
+               else max(1, int(round(n_samples * tri_counts[i] / total))))
+        assigned += cnt
+        pts = _sample_points_from_triangles(tri, cnt, rng)
+        pts_all.append(_transform_points(pts.astype(np.float64), tf_list[i]))
+    return np.concatenate(pts_all, axis=0) if pts_all else np.zeros((0, 3), dtype=np.float64)
+
+
+def _get_urdf_data():
+    """Parse URDF once and cache gripper kinematic parameters + jaw tip references."""
+    global _URDF_DATA_CACHE
+    if _URDF_DATA_CACHE is not None:
+        return _URDF_DATA_CACHE
 
     if not os.path.isfile(SO101_URDF_PATH):
         raise FileNotFoundError(f"Missing URDF: {SO101_URDF_PATH}")
 
     urdf_dir = os.path.dirname(SO101_URDF_PATH)
     root = ET.parse(SO101_URDF_PATH).getroot()
-
-    links = {link.get("name"): link for link in root.findall("link") if link.get("name")}
-    joints = {joint.get("name"): joint for joint in root.findall("joint") if joint.get("name")}
+    links = {lk.get("name"): lk for lk in root.findall("link") if lk.get("name")}
+    joints = {jt.get("name"): jt for jt in root.findall("joint") if jt.get("name")}
 
     if "gripper_link" not in links or "moving_jaw_so101_v1_link" not in links:
         raise ValueError("URDF is missing gripper links.")
     if "gripper_frame_joint" not in joints or "gripper" not in joints:
         raise ValueError("URDF is missing required gripper joints.")
 
-    # Fixed frame offset: gripper_link -> gripper_frame_link
-    gripper_frame_joint = joints["gripper_frame_joint"]
-    xyz_gf, rpy_gf = _parse_origin(gripper_frame_joint)
+    # gripper_link <-> gripper_frame_link (fixed joint)
+    gf_joint = joints["gripper_frame_joint"]
+    xyz_gf, rpy_gf = _parse_origin(gf_joint)
     t_gripper_to_frame = _make_transform(xyz_gf, rpy_gf)
     t_frame_to_gripper = _invert_transform(t_gripper_to_frame)
 
-    # Revolute moving jaw: gripper_link -> moving_jaw
+    # gripper_link -> moving_jaw_link (revolute joint)
     jaw_joint = joints["gripper"]
     xyz_j, rpy_j = _parse_origin(jaw_joint)
     t_gripper_to_jaw = _make_transform(xyz_j, rpy_j)
+
     axis_elem = jaw_joint.find("axis")
-    axis = np.fromstring(axis_elem.get("xyz", "0 0 1"), sep=" ", dtype=np.float64) \
-        if axis_elem is not None else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    jaw_axis = (np.fromstring(axis_elem.get("xyz", "0 0 1"), sep=" ", dtype=np.float64)
+                if axis_elem is not None else np.array([0.0, 0.0, 1.0], dtype=np.float64))
+
     limit_elem = jaw_joint.find("limit")
-    lower = float(limit_elem.get("lower", "0")) if limit_elem is not None else 0.0
-    upper = float(limit_elem.get("upper", "0")) if limit_elem is not None else 0.0
-    jaw_angle = upper if gripper_open else lower
-    r_jaw = _axis_angle_rot(axis, jaw_angle)
+    jaw_lower = float(limit_elem.get("lower", "0")) if limit_elem is not None else 0.0
+    jaw_upper = float(limit_elem.get("upper", "0")) if limit_elem is not None else 0.0
+
+    # --- Compute jaw tip reference points for TCP calculation ---
+    rng = np.random.default_rng(seed=999)
+    N_TIP = 20000
+
+    # Static jaw (part of gripper_link) -> gripper_frame
+    static_pts_link = _sample_link_points(links["gripper_link"], urdf_dir, N_TIP, rng)
+    static_pts_frame = _transform_points(static_pts_link, t_frame_to_gripper)
+
+    # Moving jaw in its local frame
+    moving_pts_local = _sample_link_points(links["moving_jaw_so101_v1_link"], urdf_dir, N_TIP, rng)
+
+    # Transform moving jaw to gripper_frame at closed angle to identify tip region
+    r_closed = _axis_angle_rot(jaw_axis, jaw_lower)
+    t_closed = np.eye(4, dtype=np.float64)
+    t_closed[:3, :3] = r_closed
+    moving_pts_frame_closed = _transform_points(
+        _transform_points(moving_pts_local, t_gripper_to_jaw @ t_closed),
+        t_frame_to_gripper,
+    )
+
+    # Jaw tips = centroid of z-bottom 15 % region in gripper_frame
+    def _tip_centroid(pts, pct=15):
+        z = pts[:, 2]
+        thresh = z.min() + (z.max() - z.min()) * pct / 100.0
+        mask = z < thresh
+        return pts[mask].mean(axis=0) if mask.any() else pts.mean(axis=0)
+
+    static_jaw_tip = _tip_centroid(static_pts_frame)
+
+    # For the moving jaw, find tip region indices and store their local-frame coords
+    z_m = moving_pts_frame_closed[:, 2]
+    z_thresh = z_m.min() + (z_m.max() - z_m.min()) * 0.15
+    tip_mask = z_m < z_thresh
+    moving_jaw_tip_local = (moving_pts_local[tip_mask].mean(axis=0)
+                            if tip_mask.any() else moving_pts_local.mean(axis=0))
+
+    _URDF_DATA_CACHE = {
+        "urdf_dir": urdf_dir,
+        "links": links,
+        "t_gripper_to_frame": t_gripper_to_frame,
+        "t_frame_to_gripper": t_frame_to_gripper,
+        "t_gripper_to_jaw": t_gripper_to_jaw,
+        "jaw_axis": jaw_axis,
+        "jaw_lower": jaw_lower,
+        "jaw_upper": jaw_upper,
+        "static_jaw_tip_in_frame": static_jaw_tip.astype(np.float64),
+        "moving_jaw_tip_in_link": moving_jaw_tip_local.astype(np.float64),
+    }
+    return _URDF_DATA_CACHE
+
+
+def _compute_tcp_in_frame(jaw_angle):
+    """
+    Compute TCP (two-finger contact midpoint) in gripper_frame coordinates
+    for a given jaw angle (rad).
+    """
+    d = _get_urdf_data()
+    static_tip = d["static_jaw_tip_in_frame"]
+
+    # Transform moving jaw tip from local to gripper_frame
+    tip_h = np.array([*d["moving_jaw_tip_in_link"], 1.0], dtype=np.float64)
+    r_jaw = _axis_angle_rot(d["jaw_axis"], jaw_angle)
+    t_rot = np.eye(4, dtype=np.float64)
+    t_rot[:3, :3] = r_jaw
+    tip_in_frame = d["t_frame_to_gripper"] @ d["t_gripper_to_jaw"] @ t_rot @ tip_h
+    moving_tip = tip_in_frame[:3]
+
+    return ((static_tip + moving_tip) / 2.0).astype(np.float64)
+
+
+def width_to_jaw_angle(width, max_width, lower=None, upper=None):
+    """
+    Linear mapping from hand fingertip width (m) to jaw angle (rad).
+    width=0 -> jaw=lower (fully closed), width=max_width -> jaw=upper (fully open).
+    """
+    if lower is None or upper is None:
+        d = _get_urdf_data()
+        if lower is None:
+            lower = d["jaw_lower"]
+        if upper is None:
+            upper = d["jaw_upper"]
+    if max_width <= 0:
+        return float(lower)
+    ratio = float(np.clip(width / max_width, 0.0, 1.0))
+    return lower + ratio * (upper - lower)
+
+
+def _load_so101_gripper_points_in_frame(jaw_angle, num_points):
+    """
+    Sample gripper surface points in gripper_frame at a given jaw angle (rad).
+    Cached per quantized angle (0.02 rad ≈ 1°) and point count.
+    """
+    angle_q = round(float(jaw_angle), 2)
+    cache_key = (angle_q, int(num_points))
+    if cache_key in _GRIPPER_MODEL_CACHE:
+        return _GRIPPER_MODEL_CACHE[cache_key]
+
+    d = _get_urdf_data()
+
+    r_jaw = _axis_angle_rot(d["jaw_axis"], jaw_angle)
     t_jaw_rot = np.eye(4, dtype=np.float64)
     t_jaw_rot[:3, :3] = r_jaw
 
-    rng = np.random.default_rng(123 if gripper_open else 456)
+    rng = np.random.default_rng(int(abs(angle_q * 100)) % (2**31))
     n_static = max(1, int(num_points * 0.6))
     n_moving = max(1, num_points - n_static)
 
-    def load_link_points(link_name, n_samples):
-        link = links[link_name]
-        mesh_specs = _collect_link_visual_meshes(link)
-        if not mesh_specs:
-            return np.zeros((0, 3), dtype=np.float32)
+    # Static gripper body in gripper_link frame
+    pts_gripper = _sample_link_points(
+        d["links"]["gripper_link"], d["urdf_dir"], n_static, rng
+    ).astype(np.float64)
 
-        # Sample proportionally to triangle count per mesh.
-        tri_counts = []
-        tri_list = []
-        tf_list = []
-        for mesh_file, t_link_to_mesh in mesh_specs:
-            mesh_path = _resolve_mesh_path(urdf_dir, mesh_file)
-            tri = _read_stl_triangles(mesh_path)
-            tri_counts.append(max(len(tri), 1))
-            tri_list.append(tri)
-            tf_list.append(t_link_to_mesh)
-
-        total = float(sum(tri_counts))
-        points_all = []
-        assigned = 0
-        for i, tri in enumerate(tri_list):
-            count = n_samples - assigned if i == len(tri_list) - 1 else max(1, int(round(n_samples * tri_counts[i] / total)))
-            assigned += count
-            pts_mesh = _sample_points_from_triangles(tri, count, rng)
-            pts_link = _transform_points(pts_mesh, tf_list[i])
-            points_all.append(pts_link)
-
-        return np.concatenate(points_all, axis=0) if points_all else np.zeros((0, 3), dtype=np.float32)
-
-    # Static gripper body in gripper_link frame.
-    pts_gripper = load_link_points("gripper_link", n_static).astype(np.float64)
-
-    # Moving jaw transformed into gripper_link frame.
-    pts_jaw_child = load_link_points("moving_jaw_so101_v1_link", n_moving).astype(np.float64)
-    pts_jaw_in_gripper = _transform_points(pts_jaw_child, t_gripper_to_jaw @ t_jaw_rot)
+    # Moving jaw: apply joint rotation, then transform to gripper_link frame
+    pts_jaw_child = _sample_link_points(
+        d["links"]["moving_jaw_so101_v1_link"], d["urdf_dir"], n_moving, rng
+    ).astype(np.float64)
+    pts_jaw_in_gripper = _transform_points(
+        pts_jaw_child, d["t_gripper_to_jaw"] @ t_jaw_rot
+    )
 
     pts_link = np.concatenate([pts_gripper, pts_jaw_in_gripper], axis=0)
-
-    # Express model points in gripper_frame coordinates so caller pose can be that frame.
-    pts_frame = _transform_points(pts_link, t_frame_to_gripper).astype(np.float32)
+    pts_frame = _transform_points(pts_link, d["t_frame_to_gripper"]).astype(np.float32)
     _GRIPPER_MODEL_CACHE[cache_key] = pts_frame
     return pts_frame
 
 
-def create_gripper_points(position, orientation, gripper_open,
-                          num_points=1200, gripper_length=0.06, gripper_width=0.04):
+def create_gripper_points(position, orientation, jaw_angle, num_points=1200):
     """
-    Create SO-ARM100 gripper point cloud from URDF + STL meshes at the given pose.
-    The inserted gripper is rendered as pure black (color=[0,0,0]).
-    
+    Create SO-ARM100 gripper point cloud at the given pose.
+
+    The gripper is positioned so that its TCP (two-finger contact midpoint)
+    aligns with *position*.  This accounts for the offset between the
+    gripper_frame origin and the actual contact point at the given jaw angle.
+
     Args:
-        position: (3,) hand center position
-        orientation: (3,3) rotation matrix
-        gripper_open: bool
-        num_points: number of sampled mesh surface points
-        gripper_length: unused, kept for API compatibility
-        gripper_width: unused, kept for API compatibility
-    
+        position:    (3,)   target TCP / grasp-point position
+        orientation: (3,3)  rotation matrix
+        jaw_angle:   float  jaw joint angle in radians
+        num_points:  int    number of sampled mesh surface points
+
     Returns:
         coords: (N, 3) float32
         colors: (N, 3) float32 (all zeros = black)
     """
-    _ = (gripper_length, gripper_width)
-    gripper_local = _load_so101_gripper_points_in_frame(bool(gripper_open), int(num_points))
+    gripper_local = _load_so101_gripper_points_in_frame(jaw_angle, int(num_points))
 
-    # Transform from gripper frame to camera/world frame.
-    all_pts = (orientation @ gripper_local.T).T + position
+    # Compute TCP offset to align contact midpoint with target position
+    tcp_local = _compute_tcp_in_frame(jaw_angle)
 
-    # All black color
+    # Shift gripper origin: position = R @ tcp_local + p_gripper
+    # => p_gripper = position - R @ tcp_local
+    p_gripper = position - orientation @ tcp_local
+
+    # Transform all gripper points to world / camera frame
+    all_pts = (orientation @ gripper_local.T).T + p_gripper
     colors = np.zeros_like(all_pts)
-    return all_pts, colors
+    return all_pts.astype(np.float32), colors.astype(np.float32)
 
 
 def voxelize_point_cloud(coords, colors, voxel_size=100, coord_bounds=None):
@@ -375,8 +479,7 @@ def voxelize_point_cloud(coords, colors, voxel_size=100, coord_bounds=None):
 def build_training_episodes(
     raw_npz_path: str,
     masks_npz_path: str,
-    hand_pose_path: str,
-    hand_states_path: str,
+    gripper_action_path: str,
     keyframes_path: str,
     output_path: str,
     voxel_size: int = 100,
@@ -384,9 +487,10 @@ def build_training_episodes(
 ):
     """
     Build training episodes from pipeline outputs.
-    
+
     Each episode = (voxel_grid, action) at a keyframe.
-    Action = [x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22, gripper_open]
+    Action = [x, y, z, r00..r22, width_norm]  (13 dimensions)
+    where width_norm = ee_width / max_width ∈ [0, 1].
     """
     # Load data
     raw = np.load(raw_npz_path, allow_pickle=True)
@@ -395,21 +499,31 @@ def build_training_episodes(
     intrinsic = raw["intrinsic"]      # [fx, fy, cx, cy]
 
     masks_data = np.load(masks_npz_path, allow_pickle=True)
-    masks = masks_data["masks"]       # (N, H, W) bool
+    masks = masks_data["arm_hand_masks"] if "arm_hand_masks" in masks_data else masks_data["masks"]
 
-    pose_data = np.load(hand_pose_path)
-    positions = pose_data["positions"]       # (N, 3)
-    orientations = pose_data["orientations"] # (N, 3, 3)
-    pose_valid = pose_data["valid"]          # (N,) bool
+    action_data = np.load(gripper_action_path, allow_pickle=True)
+    positions = action_data["ee_pts"]         # (N, 3)
+    orientations = action_data["ee_oris"]     # (N, 3, 3)
+    ee_widths = action_data["ee_widths"]      # (N,) continuous width in metres
+    pose_valid = action_data["hand_detected"] # (N,) bool
+    keyframes = np.load(keyframes_path)       # (K,) int
 
-    hand_open = np.load(hand_states_path)    # (N,) bool
-    keyframes = np.load(keyframes_path)      # (K,) int
+    # max_width for normalisation (saved by gripper_action step)
+    max_width = float(action_data["max_width"]) if "max_width" in action_data else 0.0
+    if max_width <= 0:
+        valid_w = ee_widths[pose_valid] if pose_valid.any() else ee_widths
+        max_width = float(np.percentile(valid_w[valid_w > 0], 95)) if (valid_w > 0).any() else 0.05
+
+    # URDF jaw limits for width → angle mapping
+    urdf_data = _get_urdf_data()
+    jaw_lower = urdf_data["jaw_lower"]
+    jaw_upper = urdf_data["jaw_upper"]
 
     if coord_bounds is not None:
         coord_bounds = np.array(coord_bounds, dtype=np.float32)
 
-    print(f"[05] Building episodes for {len(keyframes)} keyframes")
-    print(f"     Voxel size: {voxel_size}^3")
+    print(f"[06] Building episodes for {len(keyframes)} keyframes")
+    print(f"     Voxel size: {voxel_size}^3, max_width: {max_width:.4f}m")
 
     episode_voxel_grids = []
     episode_actions = []
@@ -447,28 +561,32 @@ def build_training_episodes(
             print(f"     Skipping keyframe {kf_idx}: empty point cloud")
             continue
 
-        # 2. Create gripper points at hand pose
+        # 2. Compute jaw angle from continuous width
+        w = float(ee_widths[kf_idx])
+        jaw_angle = width_to_jaw_angle(w, max_width, jaw_lower, jaw_upper)
+        width_norm = float(np.clip(w / max_width, 0.0, 1.0)) if max_width > 0 else 0.0
+
+        # 3. Create gripper points at hand pose with TCP compensation
         gripper_coords, gripper_colors = create_gripper_points(
-            positions[kf_idx], orientations[kf_idx],
-            hand_open[kf_idx]
+            positions[kf_idx], orientations[kf_idx], jaw_angle
         )
 
-        # 3. Merge scene + gripper points
+        # 4. Merge scene + gripper points
         all_coords = np.concatenate([coords, gripper_coords], axis=0)
         all_colors = np.concatenate([colors, gripper_colors], axis=0)
 
-        # 4. Voxelize
+        # 5. Voxelize
         voxel_grid = voxelize_point_cloud(all_coords, all_colors,
                                            voxel_size=voxel_size,
                                            coord_bounds=coord_bounds)
 
-        # 5. Build action vector:
-        # [x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22, gripper_open]
+        # 6. Build action vector:
+        # [x, y, z, r00..r22, width_norm]  (13 dims)
         rot = orientations[kf_idx].flatten()  # 9 elements
         action = np.concatenate([
-            positions[kf_idx],              # 3: position
-            rot,                             # 9: rotation matrix flattened
-            [float(hand_open[kf_idx])],     # 1: gripper state
+            positions[kf_idx],       # 3: position (= TCP target)
+            rot,                      # 9: rotation matrix flattened
+            [width_norm],             # 1: normalised gripper width [0, 1]
         ]).astype(np.float32)
 
         episode_voxel_grids.append(voxel_grid)
@@ -490,6 +608,7 @@ def build_training_episodes(
         keyframe_indices=episode_keyframe_indices,
         coord_bounds=coord_bounds,
         voxel_size=voxel_size,
+        max_width=max_width,
     )
     print(f"     Saved {len(episode_voxel_grids)} episodes to {output_path}")
     print(f"     Voxel grid shape: {episode_voxel_grids.shape}")

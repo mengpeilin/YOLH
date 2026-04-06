@@ -1,9 +1,9 @@
 """
-Step 05: Batch voxelization + gripper insertion.
+Step 06: Voxelization + gripper insertion from gripper actions.
 No special conda environment needed.
 
 Usage:
-    python voxelization_pipeline/05_voxelization.py --data-dir data/
+    python voxelization_pipeline/06_voxelization.py --data-dir data/
 """
 
 import argparse
@@ -22,20 +22,18 @@ def main():
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
-    sessions = sorted([
-        d for d in data_dir.iterdir()
-        if d.is_dir() and d.name.startswith("rosbag")
-    ])
+    sessions = sorted(
+        d for d in data_dir.iterdir() if d.is_dir() and d.name.startswith("rosbag")
+    )
 
     for i, sess in enumerate(sessions):
         raw = sess / "raw.npz"
         masks = sess / "masks.npz"
-        pose = sess / "hand_pose.npz"
-        states = sess / "hand_states.npy"
+        action = sess / "gripper_action.npz"
         kf = sess / "keyframes.npy"
         out = sess / "episodes.npz"
 
-        required = [raw, masks, pose, states, kf]
+        required = [raw, masks, action, kf]
         if not all(f.exists() for f in required):
             missing = [f.name for f in required if not f.exists()]
             print(f"[{i+1}/{len(sessions)}] {sess.name}: skip (missing {missing})")
@@ -45,8 +43,9 @@ def main():
             continue
         print(f"\n[{i+1}/{len(sessions)}] {sess.name}")
         build_training_episodes(
-            str(raw), str(masks), str(pose), str(states), str(kf),
-            str(out), args.voxel_size, args.coord_bounds)
+            str(raw), str(masks), str(action), str(kf),
+            str(out), args.voxel_size, args.coord_bounds,
+        )
 
 
 if __name__ == "__main__":

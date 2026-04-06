@@ -65,21 +65,23 @@ def keyframe_discovery(
 
 
 def detect_keyframes(
-    hand_pose_path: str,
-    hand_states_path: str,
+    gripper_action_path: str,
     output_path: str,
     stopping_delta: float = 0.005,
 ):
-    pose_data = np.load(hand_pose_path)
-    positions = pose_data["positions"]    # (N, 3)
-    valid = pose_data["valid"]            # (N,) bool
+    """Detect keyframes from gripper_action.npz (new phantom-based pipeline)."""
+    action_data = np.load(gripper_action_path, allow_pickle=True)
+    positions = action_data["ee_pts"]       # (N, 3)  smoothed
+    ee_widths = action_data["ee_widths"]    # (N,) continuous width (0 = closed)
+    hand_detected = action_data["hand_detected"]  # (N,) bool
 
-    hand_open = np.load(hand_states_path) # (N,) bool
+    # Derive open/close from continuous widths (0 = closed, >0 = open)
+    hand_open = ee_widths > 0
 
     assert len(positions) == len(hand_open), \
-        f"Frame count mismatch: poses={len(positions)}, states={len(hand_open)}"
+        f"Frame count mismatch: pos={len(positions)}, gripper={len(hand_open)}"
 
-    keyframes = keyframe_discovery(positions, hand_open, valid,
+    keyframes = keyframe_discovery(positions, hand_open, hand_detected,
                                    stopping_delta=stopping_delta)
 
     keyframes = np.array(keyframes, dtype=np.int64)

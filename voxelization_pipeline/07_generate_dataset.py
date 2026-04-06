@@ -1,9 +1,9 @@
 """
-Step 06: Merge all session episodes into a single training dataset.
+Step 07: Merge all session episodes into a single training dataset.
 No special conda environment needed.
 
 Usage:
-    python voxelization_pipeline/06_gripper_insertion.py \
+    python voxelization_pipeline/07_generate_dataset.py \
         --data-dir data/ --output-path data/train_dataset.npz --task-name pick_cup
 """
 

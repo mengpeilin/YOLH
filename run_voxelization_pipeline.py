@@ -2,16 +2,10 @@
 YOLH Data Processing Pipeline
 
 Usage:
-    # Step 00 requires ROS2; run this script from a shell where ROS2 is sourced
-    # and no conda environment is active.
     python3 run_voxelization_pipeline.py \
         --input-dir /path/to/ros2bags \
         --output-dir data/ \
         --task-name pick_cup
-
-Steps that require a specific conda environment use `conda run -n <env>`.
-Override the environment names with --sam2-env, --handstate-env, --wilor-env.
-All steps are idempotent; completed steps are skipped automatically.
 """
 
 import argparse
@@ -42,12 +36,12 @@ def main():
                         help="Root output directory for all pipeline data")
     parser.add_argument("--task-name", required=True,
                         help="Task name used for the final dataset (e.g. pick_cup)")
-    parser.add_argument("--sam2-env",      default="sam2",
-                        help="Conda env name for SAM2 (default: sam2)")
-    parser.add_argument("--handstate-env", default="handstate",
-                        help="Conda env name for hand_object_detector (default: handstate)")
-    parser.add_argument("--wilor-env",     default="wilor",
-                        help="Conda env name for WiLoR (default: wilor)")
+    parser.add_argument("--sam2-env",    default="sam2",
+                        help="Conda env for SAM2 (default: sam2)")
+    parser.add_argument("--phantom-env", default="phantom",
+                        help="Conda env for DINO / HaMeR / action (default: phantom)")
+    parser.add_argument("--hand-side",   default="right", choices=["left", "right"],
+                        help="Which hand to track (default: right)")
     args = parser.parse_args()
 
     pipeline_dir = Path(__file__).resolve().parent / "voxelization_pipeline"
@@ -56,63 +50,50 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    print("############# 00_ros2bag_process ###########")
-    # Must run with the Python that has ROS2 / rosbag2_py available.
-    # Do NOT activate any conda environment before running this script.
-    script_path = pipeline_dir / "00_ros2bag_process.py"
-    assert script_path.is_file()
-    run([sys.executable, str(script_path),
+    print("############# 00  ros2bag_process ###########")
+    run([sys.executable, str(pipeline_dir / "00_ros2bag_process.py"),
          "--input-dir", str(input_dir),
          "--output-dir", str(output_dir)])
 
     # ------------------------------------------------------------------
-    print("############# 01_mask_generation ###########")
-    # Interactive: for each session you will draw a bounding box on the
-    # first frame to initialise SAM2 tracking.
-    script_path = pipeline_dir / "01_mask_generation.py"
-    assert script_path.is_file()
-    run(conda_run(args.sam2_env, script_path,
+    print("############# 01  hand_bbox (DINO) ###########")
+    run(conda_run(args.phantom_env, pipeline_dir / "01_hand_bbox.py",
                   "--data-dir", output_dir))
 
     # ------------------------------------------------------------------
-    print("############# 02_hand_openclose ###########")
-    script_path = pipeline_dir / "02_hand_openclose.py"
-    assert script_path.is_file()
-    run(conda_run(args.handstate_env, script_path,
+    # print("############# 02  mask_generation (SAM2) ###########")
+    # run(conda_run(args.sam2_env, pipeline_dir / "02_mask_generation.py",
+    #               "--data-dir", output_dir))
+
+    # ------------------------------------------------------------------
+    print("############# 03  hand_state (HaMeR + ICP) ###########")
+    run(conda_run(args.phantom_env, pipeline_dir / "03_hand_state.py",
+                  "--data-dir", output_dir,
+                  "--hand-side", args.hand_side))
+
+    # ------------------------------------------------------------------
+    print("############# 04  gripper_action (smoothing) ###########")
+    run(conda_run(args.phantom_env, pipeline_dir / "04_gripper_action.py",
                   "--data-dir", output_dir))
 
     # ------------------------------------------------------------------
-    print("############# 03_hand_pose ###########")
-    script_path = pipeline_dir / "03_hand_pose.py"
-    assert script_path.is_file()
-    run(conda_run(args.wilor_env, script_path,
-                  "--data-dir", output_dir))
-
-    # ------------------------------------------------------------------
-    print("############# 04_keyframe_detection ###########")
-    script_path = pipeline_dir / "04_keyframe_detection.py"
-    assert script_path.is_file()
-    run([sys.executable, str(script_path),
+    print("############# 05  keyframe_detection ###########")
+    run([sys.executable, str(pipeline_dir / "05_keyframe_detection.py"),
          "--data-dir", str(output_dir)])
 
     # ------------------------------------------------------------------
-    print("############# 05_voxelization ###########")
-    script_path = pipeline_dir / "05_voxelization.py"
-    assert script_path.is_file()
-    run([sys.executable, str(script_path),
+    print("############# 06  voxelization ###########")
+    run([sys.executable, str(pipeline_dir / "06_voxelization.py"),
          "--data-dir", str(output_dir)])
 
     # ------------------------------------------------------------------
-    # print("############# 06_generate_dataset ###########")
-    # script_path = pipeline_dir / "06_generate_dataset.py"
-    # assert script_path.is_file()
+    # print("############# 07  generate_dataset ###########")
     # dataset_path = output_dir / "train_dataset.npz"
-    # run([sys.executable, str(script_path),
+    # run([sys.executable, str(pipeline_dir / "07_generate_dataset.py"),
     #      "--data-dir",     str(output_dir),
     #      "--output-path",  str(dataset_path),
     #      "--task-name",    args.task_name])
 
-    # ------------------------------------------------------------------
     # print("############# Pipeline complete ###########")
     # print(f"Training dataset: {dataset_path}")
 

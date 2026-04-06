@@ -50,7 +50,7 @@ class YOLHDataset(Dataset):
     def __init__(self, dataset_path, voxel_size=100, rotation_resolution=5):
         data = np.load(dataset_path, allow_pickle=True)
         self.voxel_grids = data['voxel_grids']    # (N, V, V, V, 4)
-        self.actions = data['actions']              # (N, 13): [pos(3), rot(9), grip(1)]
+        self.actions = data['actions']              # (N, 13): [pos(3), rot(9), width_norm(1)]
         self.coord_bounds = data['coord_bounds']    # (6,)
         self.voxel_size = int(data['voxel_size'])
         self.rotation_resolution = rotation_resolution
@@ -67,7 +67,7 @@ class YOLHDataset(Dataset):
         """Convert continuous action to discretized GT for training."""
         position = action[:3]
         rot_matrix = action[3:12].reshape(3, 3)
-        gripper_open = action[12]
+        width_norm = float(action[12])   # continuous [0, 1]
 
         # Discretize translation: position -> voxel index
         bb_mins = self.coord_bounds[:3]
@@ -92,18 +92,15 @@ class YOLHDataset(Dataset):
         except Exception:
             disc_rot = np.zeros(3, dtype=np.int32)
 
-        # Gripper: 0 = closed, 1 = open
-        grip_idx = int(gripper_open > 0.5)
+        rot_indices = disc_rot.astype(np.int32)
 
-        rot_grip = np.concatenate([disc_rot, [grip_idx]]).astype(np.int32)
-
-        return trans_idx, rot_grip
+        return trans_idx, rot_indices, width_norm
 
     def __getitem__(self, idx):
         voxel_grid = self.voxel_grids[idx]    # (V, V, V, 4)
         action = self.actions[idx]             # (13,)
 
-        trans_idx, rot_grip = self._action_to_gt(action)
+        trans_idx, rot_indices, width_norm = self._action_to_gt(action)
 
         # Convert voxel grid to channel-first: (4, V, V, V)
         # The 4 channels: R, G, B, occupancy
@@ -141,7 +138,8 @@ class YOLHDataset(Dataset):
         return {
             'voxel_grid': full_voxel,
             'trans_action_indices': torch.from_numpy(trans_idx).long(),
-            'rot_grip_action_indices': torch.from_numpy(rot_grip).long(),
+            'rot_action_indices': torch.from_numpy(rot_indices).long(),
+            'width_norm': torch.tensor(width_norm, dtype=torch.float32),
         }
 
 
@@ -199,7 +197,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, cfg):
     for batch in dataloader:
         voxel_grid = batch['voxel_grid'].to(device)           # (B, 10, V, V, V)
         trans_gt = batch['trans_action_indices'].to(device)    # (B, 3)
-        rot_grip_gt = batch['rot_grip_action_indices'].to(device)  # (B, 4)
+        rot_gt = batch['rot_action_indices'].to(device)        # (B, 3)
+        width_target = batch['width_norm'].to(device)          # (B,)
 
         bs = voxel_grid.shape[0]
         bounds = torch.tensor(cfg['coord_bounds'], device=device).unsqueeze(0).expand(bs, -1)
@@ -220,10 +219,13 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, cfg):
         loss_grip = torch.tensor(0.0, device=device)
         if q_rot_grip is not None:
             nrc = num_rotation_classes
-            loss_rot += ce_loss(q_rot_grip[:, 0*nrc:1*nrc], rot_grip_gt[:, 0].long())
-            loss_rot += ce_loss(q_rot_grip[:, 1*nrc:2*nrc], rot_grip_gt[:, 1].long())
-            loss_rot += ce_loss(q_rot_grip[:, 2*nrc:3*nrc], rot_grip_gt[:, 2].long())
-            loss_grip += ce_loss(q_rot_grip[:, 3*nrc:], rot_grip_gt[:, 3].long())
+            loss_rot += ce_loss(q_rot_grip[:, 0*nrc:1*nrc], rot_gt[:, 0].long())
+            loss_rot += ce_loss(q_rot_grip[:, 1*nrc:2*nrc], rot_gt[:, 1].long())
+            loss_rot += ce_loss(q_rot_grip[:, 2*nrc:3*nrc], rot_gt[:, 2].long())
+            # Continuous grip regression: softmax -> MSE against width_norm
+            grip_logits = q_rot_grip[:, 3*nrc:]
+            grip_pred = F.softmax(grip_logits, dim=1)[:, 1]  # P(open) in [0,1]
+            loss_grip = F.mse_loss(grip_pred, width_target)
 
         total_loss = (loss_trans * cfg.get('trans_loss_weight', 1.0) +
                       loss_rot * cfg.get('rot_loss_weight', 1.0) +
