@@ -61,9 +61,9 @@ def main():
                   "--data-dir", output_dir))
 
     # ------------------------------------------------------------------
-    # print("############# 02  mask_generation (SAM2) ###########")
-    # run(conda_run(args.sam2_env, pipeline_dir / "02_mask_generation.py",
-    #               "--data-dir", output_dir))
+    print("############# 02  mask_generation (SAM2) ###########")
+    run(conda_run(args.sam2_env, pipeline_dir / "02_mask_generation.py",
+                  "--data-dir", output_dir))
 
     # ------------------------------------------------------------------
     print("############# 03  hand_state (HaMeR + ICP) ###########")
@@ -87,15 +87,15 @@ def main():
          "--data-dir", str(output_dir)])
 
     # ------------------------------------------------------------------
-    # print("############# 07  generate_dataset ###########")
-    # dataset_path = output_dir / "train_dataset.npz"
-    # run([sys.executable, str(pipeline_dir / "07_generate_dataset.py"),
-    #      "--data-dir",     str(output_dir),
-    #      "--output-path",  str(dataset_path),
-    #      "--task-name",    args.task_name])
+    print("############# 07  generate_dataset ###########")
+    dataset_path = output_dir / "train_dataset.npz"
+    run([sys.executable, str(pipeline_dir / "07_generate_dataset.py"),
+         "--data-dir",     str(output_dir),
+         "--output-path",  str(dataset_path),
+         "--task-name",    args.task_name])
 
-    # print("############# Pipeline complete ###########")
-    # print(f"Training dataset: {dataset_path}")
+    print("############# Pipeline complete ###########")
+    print(f"Training dataset: {dataset_path}")
 
 
 if __name__ == "__main__":

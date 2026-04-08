@@ -54,6 +54,12 @@ class YOLHDataset(Dataset):
         self.coord_bounds = data['coord_bounds']    # (6,)
         self.voxel_size = int(data['voxel_size'])
         self.rotation_resolution = rotation_resolution
+        # proprios: previous keyframe's EE state, raw 13-dim (same format as actions)
+        # Falls back to zeros if dataset was generated without proprio support.
+        if 'proprios' in data:
+            self.proprios = data['proprios']          # (N, 13)
+        else:
+            self.proprios = np.zeros_like(self.actions)
 
         logger.info(f"Loaded {len(self.voxel_grids)} episodes from {dataset_path}")
         logger.info(f"  Voxel grid shape: {self.voxel_grids.shape}")
@@ -135,11 +141,36 @@ class YOLHDataset(Dataset):
         occ = voxel_tensor[3:4]
         full_voxel = torch.cat([rgb, xyz_coords, occ, vox_idx], dim=0)  # (10, V, V, V)
 
+        # --- Build proprio vector (8-dim): pos_norm(3) + quat(4) + width_norm(1) ---
+        proprio_raw = self.proprios[idx]   # (13,)
+        p_pos = proprio_raw[:3].astype(np.float64)
+        p_rot = proprio_raw[3:12].reshape(3, 3).astype(np.float64)
+        p_wn  = float(proprio_raw[12])
+
+        # Normalize position to [-1, 1] using coord_bounds
+        bb_r = (self.coord_bounds[3:] - self.coord_bounds[:3]).astype(np.float64)
+        p_pos_norm = np.clip(
+            2.0 * (p_pos - self.coord_bounds[:3]) / (bb_r + 1e-8) - 1.0,
+            -1.0, 1.0,
+        ).astype(np.float32)
+
+        # Rotation matrix -> unit quaternion [x,y,z,w]
+        try:
+            p_quat = Rotation.from_matrix(p_rot).as_quat().astype(np.float32)
+            if p_quat[-1] < 0:
+                p_quat = -p_quat
+            p_quat /= (np.linalg.norm(p_quat) + 1e-8)
+        except Exception:
+            p_quat = np.array([0., 0., 0., 1.], dtype=np.float32)
+
+        proprio = np.concatenate([p_pos_norm, p_quat, [p_wn]]).astype(np.float32)  # (8,)
+
         return {
             'voxel_grid': full_voxel,
             'trans_action_indices': torch.from_numpy(trans_idx).long(),
             'rot_action_indices': torch.from_numpy(rot_indices).long(),
             'width_norm': torch.tensor(width_norm, dtype=torch.float32),
+            'proprio': torch.from_numpy(proprio),
         }
 
 
@@ -156,7 +187,7 @@ def create_model(cfg):
         iterations=cfg.get('transformer_iterations', 1),
         voxel_size=cfg.get('voxel_size', 100),
         initial_dim=10,  # rgb(3) + xyz(3) + occupancy(1) + voxel_coord(3)
-        low_dim_size=0,  # no proprioception
+        low_dim_size=8,  # pos_norm(3) + quat(4) + width_norm(1)
         layer=0,
         num_rotation_classes=num_rotation_classes,
         num_grip_classes=2,
@@ -199,13 +230,14 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, cfg):
         trans_gt = batch['trans_action_indices'].to(device)    # (B, 3)
         rot_gt = batch['rot_action_indices'].to(device)        # (B, 3)
         width_target = batch['width_norm'].to(device)          # (B,)
+        proprio = batch['proprio'].to(device)                  # (B, 8)
 
         bs = voxel_grid.shape[0]
         bounds = torch.tensor(cfg['coord_bounds'], device=device).unsqueeze(0).expand(bs, -1)
 
-        # Forward: no language, no proprio
+        # Forward: no language, with proprioception
         q_trans, q_rot_grip, q_collision = model(
-            voxel_grid, None, None, bounds, None)
+            voxel_grid, proprio, None, bounds, None)
 
         # Translation loss
         trans_target = (trans_gt[:, 0] * voxel_size * voxel_size +

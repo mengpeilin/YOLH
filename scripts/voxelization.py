@@ -270,9 +270,13 @@ def _get_urdf_data():
     jaw_lower = float(limit_elem.get("lower", "0")) if limit_elem is not None else 0.0
     jaw_upper = float(limit_elem.get("upper", "0")) if limit_elem is not None else 0.0
 
-    # --- Compute jaw tip reference points for TCP calculation ---
+    # --- Compute inner-surface contact reference points for TCP ---
+    # TCP = midpoint of two points on the inner contact face of each finger,
+    #       each located 2 cm from the respective fingertip.
     rng = np.random.default_rng(seed=999)
     N_TIP = 20000
+    CONTACT_OFFSET_Z = 0.05   # 5 cm from fingertip toward gripper body
+    Z_BAND = 0.005            # ±5 mm selection band
 
     # Static jaw (part of gripper_link) -> gripper_frame
     static_pts_link = _sample_link_points(links["gripper_link"], urdf_dir, N_TIP, rng)
@@ -281,7 +285,7 @@ def _get_urdf_data():
     # Moving jaw in its local frame
     moving_pts_local = _sample_link_points(links["moving_jaw_so101_v1_link"], urdf_dir, N_TIP, rng)
 
-    # Transform moving jaw to gripper_frame at closed angle to identify tip region
+    # Transform moving jaw to gripper_frame at closed angle
     r_closed = _axis_angle_rot(jaw_axis, jaw_lower)
     t_closed = np.eye(4, dtype=np.float64)
     t_closed[:3, :3] = r_closed
@@ -290,21 +294,38 @@ def _get_urdf_data():
         t_frame_to_gripper,
     )
 
-    # Jaw tips = centroid of z-bottom 15 % region in gripper_frame
-    def _tip_centroid(pts, pct=15):
-        z = pts[:, 2]
-        thresh = z.min() + (z.max() - z.min()) * pct / 100.0
-        mask = z < thresh
-        return pts[mask].mean(axis=0) if mask.any() else pts.mean(axis=0)
+    def _inner_contact_point(pts, other_centroid_x, z_tip):
+        """Inner-surface point at CONTACT_OFFSET_Z from fingertip."""
+        z_target = z_tip + CONTACT_OFFSET_Z
+        zmask = np.abs(pts[:, 2] - z_target) < Z_BAND
+        if zmask.sum() < 5:  # widen band if too few points
+            dists = np.abs(pts[:, 2] - z_target)
+            zmask = dists < np.percentile(dists, 10)
+        cands = pts[zmask]
+        # Inner 30 %: side closest to the opposing jaw along x
+        cx = cands[:, 0]
+        if other_centroid_x > cx.mean():
+            inner = cands[cx >= np.percentile(cx, 70)]
+        else:
+            inner = cands[cx <= np.percentile(cx, 30)]
+        return inner.mean(axis=0) if len(inner) > 0 else cands.mean(axis=0)
 
-    static_jaw_tip = _tip_centroid(static_pts_frame)
+    static_z_tip = static_pts_frame[:, 2].min()
+    moving_z_tip = moving_pts_frame_closed[:, 2].min()
+    static_cx = static_pts_frame[:, 0].mean()
+    moving_cx = moving_pts_frame_closed[:, 0].mean()
 
-    # For the moving jaw, find tip region indices and store their local-frame coords
-    z_m = moving_pts_frame_closed[:, 2]
-    z_thresh = z_m.min() + (z_m.max() - z_m.min()) * 0.15
-    tip_mask = z_m < z_thresh
-    moving_jaw_tip_local = (moving_pts_local[tip_mask].mean(axis=0)
-                            if tip_mask.any() else moving_pts_local.mean(axis=0))
+    # Static jaw contact point (in gripper_frame)
+    static_contact = _inner_contact_point(static_pts_frame, moving_cx, static_z_tip)
+
+    # Moving jaw contact point — compute in gripper_frame then map to local frame
+    moving_contact_frame = _inner_contact_point(
+        moving_pts_frame_closed, static_cx, moving_z_tip)
+    t_local_to_frame = t_frame_to_gripper @ t_gripper_to_jaw @ t_closed
+    moving_contact_local = _transform_points(
+        moving_contact_frame.reshape(1, 3),
+        _invert_transform(t_local_to_frame),
+    ).flatten()
 
     _URDF_DATA_CACHE = {
         "urdf_dir": urdf_dir,
@@ -315,29 +336,31 @@ def _get_urdf_data():
         "jaw_axis": jaw_axis,
         "jaw_lower": jaw_lower,
         "jaw_upper": jaw_upper,
-        "static_jaw_tip_in_frame": static_jaw_tip.astype(np.float64),
-        "moving_jaw_tip_in_link": moving_jaw_tip_local.astype(np.float64),
+        "static_contact_in_frame": static_contact.astype(np.float64),
+        "moving_contact_in_link": moving_contact_local.astype(np.float64),
     }
     return _URDF_DATA_CACHE
 
 
 def _compute_tcp_in_frame(jaw_angle):
     """
-    Compute TCP (two-finger contact midpoint) in gripper_frame coordinates
-    for a given jaw angle (rad).
+    Compute TCP in gripper_frame coordinates for a given jaw angle (rad).
+
+    TCP = midpoint of two inner-surface contact points, each located
+    2 cm from the respective fingertip.
     """
     d = _get_urdf_data()
-    static_tip = d["static_jaw_tip_in_frame"]
+    static_pt = d["static_contact_in_frame"]
 
-    # Transform moving jaw tip from local to gripper_frame
-    tip_h = np.array([*d["moving_jaw_tip_in_link"], 1.0], dtype=np.float64)
+    # Transform moving contact point from local frame to gripper_frame
+    pt_h = np.array([*d["moving_contact_in_link"], 1.0], dtype=np.float64)
     r_jaw = _axis_angle_rot(d["jaw_axis"], jaw_angle)
     t_rot = np.eye(4, dtype=np.float64)
     t_rot[:3, :3] = r_jaw
-    tip_in_frame = d["t_frame_to_gripper"] @ d["t_gripper_to_jaw"] @ t_rot @ tip_h
-    moving_tip = tip_in_frame[:3]
+    pt_in_frame = d["t_frame_to_gripper"] @ d["t_gripper_to_jaw"] @ t_rot @ pt_h
+    moving_pt = pt_in_frame[:3]
 
-    return ((static_tip + moving_tip) / 2.0).astype(np.float64)
+    return ((static_pt + moving_pt) / 2.0).astype(np.float64)
 
 
 def width_to_jaw_angle(width, max_width, lower=None, upper=None):
@@ -396,7 +419,7 @@ def _load_so101_gripper_points_in_frame(jaw_angle, num_points):
     return pts_frame
 
 
-def create_gripper_points(position, orientation, jaw_angle, num_points=1200):
+def create_gripper_points(position, orientation, jaw_angle, num_points=1200, gripper_offset=None):
     """
     Create SO-ARM100 gripper point cloud at the given pose.
 
@@ -409,6 +432,7 @@ def create_gripper_points(position, orientation, jaw_angle, num_points=1200):
         orientation: (3,3)  rotation matrix
         jaw_angle:   float  jaw joint angle in radians
         num_points:  int    number of sampled mesh surface points
+        gripper_offset: (3,) optional position offset in world frame [m]
 
     Returns:
         coords: (N, 3) float32
@@ -422,6 +446,10 @@ def create_gripper_points(position, orientation, jaw_angle, num_points=1200):
     # Shift gripper origin: position = R @ tcp_local + p_gripper
     # => p_gripper = position - R @ tcp_local
     p_gripper = position - orientation @ tcp_local
+    
+    # Apply additional gripper offset if provided
+    if gripper_offset is not None:
+        p_gripper = p_gripper + np.asarray(gripper_offset, dtype=np.float64)
 
     # Transform all gripper points to world / camera frame
     all_pts = (orientation @ gripper_local.T).T + p_gripper
@@ -484,6 +512,7 @@ def build_training_episodes(
     output_path: str,
     voxel_size: int = 100,
     coord_bounds: list = None,
+    gripper_offset: list = None,
 ):
     """
     Build training episodes from pipeline outputs.
@@ -491,6 +520,9 @@ def build_training_episodes(
     Each episode = (voxel_grid, action) at a keyframe.
     Action = [x, y, z, r00..r22, width_norm]  (13 dimensions)
     where width_norm = ee_width / max_width ∈ [0, 1].
+    
+    Args:
+        gripper_offset: [dx, dy, dz] offset to apply to gripper position (m)
     """
     # Load data
     raw = np.load(raw_npz_path, allow_pickle=True)
@@ -524,10 +556,18 @@ def build_training_episodes(
 
     print(f"[06] Building episodes for {len(keyframes)} keyframes")
     print(f"     Voxel size: {voxel_size}^3, max_width: {max_width:.4f}m")
+    if gripper_offset is not None:
+        print(f"     Gripper offset: {gripper_offset}")
 
     episode_voxel_grids = []
     episode_actions = []
+    episode_proprios = []
     episode_keyframe_indices = []
+
+    # We drop the first valid keyframe and use its action as the seed for
+    # "previous keyframe action" so no zero-filled proprio is needed.
+    prev_action = None
+    dropped_first_valid = False
 
     # Auto-detect coordinate bounds from all keyframe point clouds if not specified
     if coord_bounds is None:
@@ -568,7 +608,7 @@ def build_training_episodes(
 
         # 3. Create gripper points at hand pose with TCP compensation
         gripper_coords, gripper_colors = create_gripper_points(
-            positions[kf_idx], orientations[kf_idx], jaw_angle
+            positions[kf_idx], orientations[kf_idx], jaw_angle, gripper_offset=gripper_offset
         )
 
         # 4. Merge scene + gripper points
@@ -589,9 +629,21 @@ def build_training_episodes(
             [width_norm],             # 1: normalised gripper width [0, 1]
         ]).astype(np.float32)
 
+        if prev_action is None:
+            prev_action = action.copy()
+            dropped_first_valid = True
+            print(f"     Dropping first valid keyframe {kf_idx} to avoid zero-filled proprio")
+            continue
+
         episode_voxel_grids.append(voxel_grid)
         episode_actions.append(action)
+        episode_proprios.append(prev_action.copy())  # proprio = previous keyframe's action
         episode_keyframe_indices.append(kf_idx)
+        prev_action = action.copy()  # advance for next keyframe
+
+    if not dropped_first_valid:
+        print("     WARNING: No valid keyframe found to seed previous-action proprio!")
+        return None
 
     if len(episode_voxel_grids) == 0:
         print("     WARNING: No valid episodes generated!")
@@ -599,12 +651,14 @@ def build_training_episodes(
 
     episode_voxel_grids = np.array(episode_voxel_grids, dtype=np.float32)
     episode_actions = np.array(episode_actions, dtype=np.float32)
+    episode_proprios = np.array(episode_proprios, dtype=np.float32)
     episode_keyframe_indices = np.array(episode_keyframe_indices, dtype=np.int64)
 
     np.savez_compressed(
         output_path,
         voxel_grids=episode_voxel_grids,
         actions=episode_actions,
+        proprios=episode_proprios,
         keyframe_indices=episode_keyframe_indices,
         coord_bounds=coord_bounds,
         voxel_size=voxel_size,
