@@ -1,5 +1,5 @@
 # 1. 基础镜像：支持 RTX 30 系列的 CUDA 11.3 编译环境
-FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
 
 # 设置环境变量，避免交互式安装提示
 ENV DEBIAN_FRONTEND=noninteractive
@@ -56,15 +56,20 @@ RUN git clone -b peract https://github.com/MohitShridhar/YARR.git && \
     pip install "moviepy<2.0.0" "numpy<1.25.0" "omegaconf==2.0.6" "antlr4-python3-runtime==4.8" && \
     pip install -r requirements.txt && python3 setup.py develop
 
-# 6. 安装 PerAct 主仓库与 PyTorch 1.11.0 (匹配 PyTorch3D 链接)
+# 6. 先安装兼容的 PyTorch，再克隆仓库
+RUN pip install --no-cache-dir \
+    torch==1.13.1+cu117 \
+    torchvision==0.14.1+cu117 \
+    --extra-index-url https://download.pytorch.org/whl/cu117
+
 RUN git clone https://github.com/peract/peract.git && \
     cd peract && \
-    pip install git+https://github.com/openai/CLIP.git && \
-    pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+    # 现在装 CLIP，它会发现 PyTorch 已经满足要求，不再乱下载 2.4 版本
+    pip install git+https://github.com/openai/CLIP.git
 
-# 7. 精准安装 PyTorch3D (预编译包)
+# 7. 精准安装 PyTorch3D (确保链接与 Torch 1.13.1 匹配)
 RUN pip install fvcore iopath && \
-    pip install --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu113_pyt1110/download.html
+    pip install --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu117_pyt1131/download.html
 
 # 8. 安装 PerAct 剩余依赖 (手动预装 transformers 避开 setup.py 的 SSL 限制)
 RUN cd /app/peract && \

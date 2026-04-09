@@ -190,7 +190,6 @@ def create_model(cfg):
         low_dim_size=8,  # pos_norm(3) + quat(4) + width_norm(1)
         layer=0,
         num_rotation_classes=num_rotation_classes,
-        num_grip_classes=2,
         num_collision_classes=2,
         input_axis=3,
         num_latents=cfg.get('num_latents', 2048),
@@ -254,9 +253,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, cfg):
             loss_rot += ce_loss(q_rot_grip[:, 0*nrc:1*nrc], rot_gt[:, 0].long())
             loss_rot += ce_loss(q_rot_grip[:, 1*nrc:2*nrc], rot_gt[:, 1].long())
             loss_rot += ce_loss(q_rot_grip[:, 2*nrc:3*nrc], rot_gt[:, 2].long())
-            # Continuous grip regression: softmax -> MSE against width_norm
-            grip_logits = q_rot_grip[:, 3*nrc:]
-            grip_pred = F.softmax(grip_logits, dim=1)[:, 1]  # P(open) in [0,1]
+            # Continuous grip regression: sigmoid -> MSE against width_norm
+            grip_pred = torch.sigmoid(q_rot_grip[:, 3*nrc:].squeeze(1))  # (B,) in [0,1]
             loss_grip = F.mse_loss(grip_pred, width_target)
 
         total_loss = (loss_trans * cfg.get('trans_loss_weight', 1.0) +

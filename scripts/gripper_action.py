@@ -153,7 +153,7 @@ def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
 def compute_gripper_actions(
     hand_state_path: str,
     output_path: str,
-    min_open_ratio: float = 0.1,
+    # min_open_ratio: float = 0.2,
 ):
     """
     Compute smoothed gripper actions from depth-aligned hand keypoints.
@@ -221,9 +221,9 @@ def compute_gripper_actions(
     )
 
     # ------ 5. Threshold small widths to zero (= fully closed) ------
-    max_width = float(ee_widths_s.max()) if ee_widths_s.max() > 0 else 0.05
-    min_threshold = max_width * min_open_ratio
-    ee_widths_s[ee_widths_s < min_threshold] = 0.0
+    # max_width = float(ee_widths_s.max()) if ee_widths_s.max() > 0 else 0.05
+    # min_threshold = max_width * min_open_ratio
+    # ee_widths_s[ee_widths_s < min_threshold] = 0.0
 
     np.savez_compressed(
         output_path,
@@ -231,6 +231,6 @@ def compute_gripper_actions(
         ee_oris=ee_oris_s,
         ee_widths=ee_widths_s,
         hand_detected=hand_detected,
-        max_width=np.float32(max_width),
+        max_width=np.float32(ee_widths_s.max()),
     )
-    print(f"     Saved gripper actions ({N} frames, max_width={max_width:.4f}m) to {output_path}")
+    print(f"     Saved gripper actions ({N} frames, max_width={ee_widths_s.max():.4f}m) to {output_path}")

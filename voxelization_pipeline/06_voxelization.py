@@ -44,7 +44,8 @@ def main():
         print(f"\n[{i+1}/{len(sessions)}] {sess.name}")
         build_training_episodes(
             str(raw), str(masks), str(action), str(kf),
-            str(out), args.voxel_size, args.coord_bounds, gripper_offset=[0.05, 0, 0]
+            str(out), args.voxel_size, args.coord_bounds,
+            gripper_offset=[0.05, 0, 0],
         )
 
 

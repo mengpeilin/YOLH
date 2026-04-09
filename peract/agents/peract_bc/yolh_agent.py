@@ -46,14 +46,14 @@ class QFunction(nn.Module):
         ignore_collision = None
         if q_rot_grip is not None:
             q_rot = torch.stack(torch.split(
-                q_rot_grip[:, :-2],
+                q_rot_grip[:, :-1],
                 int(360 // self._rotation_resolution),
                 dim=1), dim=1)
             rot_and_grip_indicies = torch.cat(
                 [q_rot[:, 0:1].argmax(-1),
                  q_rot[:, 1:2].argmax(-1),
                  q_rot[:, 2:3].argmax(-1),
-                 q_rot_grip[:, -2:].argmax(-1, keepdim=True)], -1)
+                 torch.sigmoid(q_rot_grip[:, -1:])], -1)
             ignore_collision = q_collision[:, -2:].argmax(-1, keepdim=True)
         return coords, rot_and_grip_indicies, ignore_collision
 
@@ -179,7 +179,7 @@ class YOLHQAttentionAgent:
         Args:
             voxel_grid: (B, C, V, V, V) pre-built voxel grid
             action_trans: (B, 3) ground truth voxel indices for translation
-            action_rot_grip: (B, 4) [rot_x_idx, rot_y_idx, rot_z_idx, grip_idx]
+            action_rot_grip: (B, 4) [rot_x_idx, rot_y_idx, rot_z_idx, width_norm]
             action_grip: not used separately (included in rot_grip)
             proprio: (B, D) proprioception (optional)
         """
@@ -213,20 +213,18 @@ class YOLHQAttentionAgent:
             rot_x_one_hot = torch.zeros((bs, self._num_rotation_classes), device=device)
             rot_y_one_hot = torch.zeros((bs, self._num_rotation_classes), device=device)
             rot_z_one_hot = torch.zeros((bs, self._num_rotation_classes), device=device)
-            grip_one_hot = torch.zeros((bs, 2), device=device)
-
             for b in range(bs):
-                gt = action_rot_grip[b].int()
-                rot_x_one_hot[b, gt[0]] = 1.0
-                rot_y_one_hot[b, gt[1]] = 1.0
-                rot_z_one_hot[b, gt[2]] = 1.0
-                grip_one_hot[b, gt[3]] = 1.0
+                gt = action_rot_grip[b]
+                rot_x_one_hot[b, gt[0].long()] = 1.0
+                rot_y_one_hot[b, gt[1].long()] = 1.0
+                rot_z_one_hot[b, gt[2].long()] = 1.0
 
             nrc = self._num_rotation_classes
             rot_loss += self._cross_entropy_loss(q_rot_grip[:, 0*nrc:1*nrc], rot_x_one_hot.argmax(-1))
             rot_loss += self._cross_entropy_loss(q_rot_grip[:, 1*nrc:2*nrc], rot_y_one_hot.argmax(-1))
             rot_loss += self._cross_entropy_loss(q_rot_grip[:, 2*nrc:3*nrc], rot_z_one_hot.argmax(-1))
-            grip_loss += self._cross_entropy_loss(q_rot_grip[:, 3*nrc:], grip_one_hot.argmax(-1))
+            grip_pred = torch.sigmoid(q_rot_grip[:, 3*nrc:].squeeze(1))  # (B,) in [0,1]
+            grip_loss += F.mse_loss(grip_pred, action_rot_grip[:, 3], reduction='none')
 
         total_loss = (trans_loss * self._trans_loss_weight +
                       rot_loss * self._rot_loss_weight +

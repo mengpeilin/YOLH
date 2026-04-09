@@ -15,7 +15,8 @@ from pathlib import Path
 
 
 def run(cmd):
-    print(" ".join(str(c) for c in cmd))
+    cmd = [str(c) for c in cmd]
+    print(" ".join(cmd))
     result = subprocess.run(cmd)
     assert result.returncode == 0
 
@@ -49,49 +50,49 @@ def main():
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------------
-    print("############# 00  ros2bag_process ###########")
-    run([sys.executable, str(pipeline_dir / "00_ros2bag_process.py"),
-         "--input-dir", str(input_dir),
-         "--output-dir", str(output_dir)])
+    # # ------------------------------------------------------------------
+    # print("############# 00  ros2bag_process ###########")
+    # run([sys.executable, str(pipeline_dir / "00_ros2bag_process.py"),
+    #      "--input-dir", str(input_dir),
+    #      "--output-dir", str(output_dir)])
 
-    # ------------------------------------------------------------------
-    print("############# 01  hand_bbox (DINO) ###########")
-    run(conda_run(args.phantom_env, pipeline_dir / "01_hand_bbox.py",
-                  "--data-dir", output_dir))
+    # # ------------------------------------------------------------------
+    # print("############# 01  hand_bbox (DINO) ###########")
+    # run(conda_run(args.phantom_env, pipeline_dir / "01_hand_bbox.py",
+    #               "--data-dir", output_dir))
 
-    # ------------------------------------------------------------------
-    print("############# 02  mask_generation (SAM2) ###########")
-    run(conda_run(args.sam2_env, pipeline_dir / "02_mask_generation.py",
-                  "--data-dir", output_dir))
+    # # ------------------------------------------------------------------
+    # print("############# 02  mask_generation (SAM2) ###########")
+    # run(conda_run(args.sam2_env, pipeline_dir / "02_mask_generation.py",
+    #               "--data-dir", output_dir))
 
-    # ------------------------------------------------------------------
-    print("############# 03  hand_state (HaMeR + ICP) ###########")
-    run(conda_run(args.phantom_env, pipeline_dir / "03_hand_state.py",
-                  "--data-dir", output_dir,
-                  "--hand-side", args.hand_side))
+    # # ------------------------------------------------------------------
+    # print("############# 03  hand_state (HaMeR + ICP) ###########")
+    # run(conda_run(args.phantom_env, pipeline_dir / "03_hand_state.py",
+    #               "--data-dir", output_dir,
+    #               "--hand-side", args.hand_side))
 
-    # ------------------------------------------------------------------
-    print("############# 04  gripper_action (smoothing) ###########")
-    run(conda_run(args.phantom_env, pipeline_dir / "04_gripper_action.py",
-                  "--data-dir", output_dir))
+    # # ------------------------------------------------------------------
+    # print("############# 04  gripper_action (smoothing) ###########")
+    # run(conda_run(args.phantom_env, pipeline_dir / "04_gripper_action.py",
+    #               "--data-dir", output_dir))
 
-    # ------------------------------------------------------------------
-    print("############# 05  keyframe_detection ###########")
-    run([sys.executable, str(pipeline_dir / "05_keyframe_detection.py"),
-         "--data-dir", str(output_dir)])
+    # # ------------------------------------------------------------------
+    # print("############# 05  keyframe_detection ###########")
+    # run([sys.executable, str(pipeline_dir / "05_keyframe_detection.py"),
+    #      "--data-dir", str(output_dir)])
 
     # ------------------------------------------------------------------
     print("############# 06  voxelization ###########")
-    run([sys.executable, str(pipeline_dir / "06_voxelization.py"),
-         "--data-dir", str(output_dir)])
+    run([sys.executable, pipeline_dir / "06_voxelization.py",
+         "--data-dir", output_dir, "--coord-bounds", -0.5, -0.1, 0.0, 0.5, 0.5, 1.0])
 
     # ------------------------------------------------------------------
     print("############# 07  generate_dataset ###########")
     dataset_path = output_dir / "train_dataset.npz"
-    run([sys.executable, str(pipeline_dir / "07_generate_dataset.py"),
-         "--data-dir",     str(output_dir),
-         "--output-path",  str(dataset_path),
+    run([sys.executable, pipeline_dir / "07_generate_dataset.py",
+         "--data-dir",     output_dir,
+         "--output-path",  dataset_path,
          "--task-name",    args.task_name])
 
     print("############# Pipeline complete ###########")

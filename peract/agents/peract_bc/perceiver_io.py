@@ -125,7 +125,6 @@ class PerceiverVoxelEncoder(nn.Module):
             low_dim_size,
             layer=0,
             num_rotation_classes=72,
-            num_grip_classes=2,
             num_collision_classes=2,
             input_axis=3,
             num_latents=512,
@@ -158,7 +157,6 @@ class PerceiverVoxelEncoder(nn.Module):
         self.voxel_patch_size = voxel_patch_size
         self.voxel_patch_stride = voxel_patch_stride
         self.num_rotation_classes = num_rotation_classes
-        self.num_grip_classes = num_grip_classes
         self.num_collision_classes = num_collision_classes
         self.final_dim = final_dim
         self.input_dropout = input_dropout
@@ -282,7 +280,7 @@ class PerceiverVoxelEncoder(nn.Module):
             self.dense1 = DenseBlock(256, self.final_dim, None, activation)
             self.rot_grip_collision_ff = DenseBlock(self.final_dim,
                                                     self.num_rotation_classes * 3 + \
-                                                    self.num_grip_classes + \
+                                                    1 + \
                                                     self.num_collision_classes,
                                                     None, None)
 

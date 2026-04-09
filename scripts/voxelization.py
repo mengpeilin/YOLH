@@ -480,10 +480,19 @@ def voxelize_point_cloud(coords, colors, voxel_size=100, coord_bounds=None):
 
     bb_mins = coord_bounds[:3]
     bb_maxs = coord_bounds[3:]
+
+    # Ignore points outside coord_bounds instead of clamping them to boundary voxels.
+    in_bounds = np.all((coords >= bb_mins) & (coords < bb_maxs), axis=1)
+    if not np.any(in_bounds):
+        return np.zeros((voxel_size, voxel_size, voxel_size, 4), dtype=np.float32)
+
+    coords = coords[in_bounds]
+    colors = colors[in_bounds]
+
     bb_ranges = bb_maxs - bb_mins
     res = bb_ranges / voxel_size
 
-    # Compute voxel indices
+    # Compute voxel indices for in-bound points.
     indices = np.floor((coords - bb_mins) / (res + 1e-12)).astype(np.int32)
     indices = np.clip(indices, 0, voxel_size - 1)
 
