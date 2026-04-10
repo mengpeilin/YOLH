@@ -5,7 +5,7 @@ import cv2
 import torch
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAM2_ROOT = os.path.join(PROJECT_ROOT, "sam2")
+SAM2_ROOT = os.path.join(PROJECT_ROOT, "dependencies", "sam2")
 sys.path.insert(0, SAM2_ROOT)
 
 from sam2.build_sam import build_sam2_video_predictor
@@ -91,12 +91,6 @@ def generate_masks(
     device: str = "auto",
     hand_bboxes_path: str = None,
 ):
-    """
-    Generate two SAM2 mask tracks in parallel:
-
-    1. User-initialized hand+arm mask for scene point removal in voxelization.
-    2. Step-01-bbox-initialized hand-only mask for hand pose depth alignment.
-    """
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
 

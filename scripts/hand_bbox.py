@@ -1,17 +1,3 @@
-"""
-Hand bounding box detection using GroundingDINO zero-shot detector.
-
-Requires: phantom conda environment (transformers >= 4.42).
-
-For each frame, detects "a hand" using DINO and selects the best bbox.
-Post-processing filters large jumps and interpolates short detection gaps.
-
-Saves hand_bboxes.npz:
-  - bboxes:        (N, 4) float32  [x1, y1, x2, y2]
-  - scores:        (N,)   float32
-  - hand_detected: (N,)   bool
-"""
-
 import numpy as np
 from PIL import Image
 from transformers import pipeline as hf_pipeline

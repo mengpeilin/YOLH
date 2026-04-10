@@ -6,7 +6,7 @@ A robotics imitation learning framework that trains manipulation models directly
 
 YOLH records a human hand performing manipulation tasks, processes the raw RGB-D video through a 6-stage pipeline, and trains a vision-based PerAct model to reproduce the behavior. The trained model outputs 6-DoF actions (3D position + rotation + gripper state) from voxelized scene observations.
 
-**Hardware:** Intel RealSense D435i mounted above a table + [SO-ARM100](SO-ARM100/) 6-DOF robot arm
+**Hardware:** Intel RealSense D435i mounted above a table + [URDF/SO-ARM100](URDF/SO-ARM100/) 6-DOF robot arm
 
 ## Pipeline
 
@@ -29,13 +29,13 @@ ROS2 bag → RGB-D frames → arm mask → hand state → hand pose → keyframe
 ### 1. Run the full pipeline
 
 ```bash
-python run_voxelization_pipeline.py \
+python run_yolh_pipeline.py \
     --input-dir /path/to/ros2bags \
     --output-dir data/ \
     --task-name pick_cup
 ```
 
-Or run steps individually from `voxelization_pipeline/`.
+Or run steps individually from `yolh_pipeline/`.
 
 ### 2. Train the model (Docker)
 
@@ -68,12 +68,12 @@ Checkpoints are saved to `data/checkpoints/{task_name}/`.
 
 ```
 YOLH/
-├── run_voxelization_pipeline.py   # Full pipeline orchestrator
+├── run_yolh_pipeline.py           # Full pipeline orchestrator
 ├── train.py                       # PerAct training script
 ├── Dockerfile / run_peract.sh     # Docker environment
 │
 ├── scripts/                       # Core processing modules
-├── voxelization_pipeline/         # Batch pipeline wrappers (00–06)
+├── yolh_pipeline/                 # Batch pipeline wrappers (00–06)
 │
 ├── peract/                        # PerAct model (vision-only variant)
 │   └── agents/peract_bc/
@@ -82,8 +82,8 @@ YOLH/
 │
 ├── WiLoR/                         # Hand pose estimation (CVPR 2025)
 ├── hand_object_detector/          # Hand-object detection (CVPR 2020)
-├── sam2/                          # Segment Anything Model v2
-└── SO-ARM100/                     # Robot arm hardware (STL files, specs)
+├── dependencies/sam2/             # Segment Anything Model v2
+└── URDF/SO-ARM100/                     # Robot arm hardware (STL files, specs)
 ```
 
 ## Action Format
@@ -105,7 +105,7 @@ Actions are 13-dimensional vectors:
 | WiLoR detector | `WiLoR/pretrained_models/detector.pt` | Hand detection |
 | WiLoR reconstructor | `WiLoR/pretrained_models/wilor_final.ckpt` | Hand mesh |
 | Hand-object detector | (download from Google Drive) | Interaction detection |
-| SAM2 checkpoints | `sam2/checkpoints/` | Arm segmentation |
+| SAM2 checkpoints | `dependencies/sam2/checkpoints/` | Arm segmentation |
 
 ## Key Dependencies
 

@@ -1,23 +1,3 @@
-"""
-Gripper action computation from hand keypoints + trajectory smoothing.
-
-Requires: phantom conda environment (scikit-learn, scipy).
-
-Pipeline:
-  1. Compute per-frame grasp point, orientation, gripper width from 21 keypoints
-  2. Carry-forward interpolation for missing frames
-  3. Gaussian Process smoothing for positions and widths
-  4. Gaussian-weighted SLERP smoothing for orientations
-  5. Threshold small widths to zero (closed)
-
-Saves gripper_action.npz:
-  - ee_pts:         (N, 3)    float32   smoothed end-effector positions
-  - ee_oris:        (N, 3, 3) float32   smoothed end-effector orientations
-  - ee_widths:      (N,)      float32   smoothed gripper widths (metres, 0 = closed)
-  - hand_detected:  (N,)      bool
-  - max_width:      scalar    float     max observed width for normalization
-"""
-
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 from sklearn.gaussian_process import GaussianProcessRegressor  # type: ignore
@@ -30,22 +10,9 @@ MIDDLE_TIP = 12
 INDEX_MCP = 5
 
 
-# ---------------------------------------------------------------------------
-# Per-frame action computation  (phantom HandModel logic, simplified)
-# ---------------------------------------------------------------------------
-
 def _get_gripper_orientation(thumb_tip, index_tip, vertices):
-    """
-    Compute gripper orientation matrix from thumb–index geometry.
-
-    x-axis: thumb→index (gripper open direction)
-    z-axis: roughly palm normal
-    y-axis: completes right-handed frame
-    """
     gripper_dir = thumb_tip - index_tip
-    midpoint = (thumb_tip + index_tip) / 2.0
-
-    palm_axis = vertices[INDEX_MCP] - midpoint  # toward palm
+    palm_axis = vertices[INDEX_MCP] - (thumb_tip + index_tip) / 2.0
     x_axis = gripper_dir / max(np.linalg.norm(gripper_dir), 1e-10)
     z_axis = -palm_axis / max(np.linalg.norm(palm_axis), 1e-10)
 
@@ -55,38 +22,24 @@ def _get_gripper_orientation(thumb_tip, index_tip, vertices):
     z_axis = np.cross(x_axis, y_axis)
     z_axis /= max(np.linalg.norm(z_axis), 1e-10)
 
-    # Ensure z_axis points away from palm
     if z_axis @ palm_axis > 0:
         x_axis, y_axis, z_axis = -x_axis, -y_axis, -z_axis
 
     ori = np.column_stack([x_axis, y_axis, z_axis])
     if np.linalg.det(ori) < 0:
         ori[:, 0] = -ori[:, 0]
-
     return ori
 
 
 def _compute_frame_action(kpts_3d):
-    """
-    Compute grasp point, orientation, and width from a single-frame's
-    21 hand keypoints (in camera frame).
-
-    Returns (grasp_pt, gripper_ori, gripper_width).
-    """
     thumb_tip = kpts_3d[THUMB_TIP]
     index_tip = kpts_3d[INDEX_TIP]
     middle_tip = kpts_3d[MIDDLE_TIP]
-
     grasp_pt = (thumb_tip + middle_tip) / 2.0
     gripper_ori = _get_gripper_orientation(thumb_tip, index_tip, kpts_3d)
     gripper_width = float(np.linalg.norm(thumb_tip - index_tip))
-
     return grasp_pt, gripper_ori, gripper_width
 
-
-# ---------------------------------------------------------------------------
-# Smoothing utilities  (ported from phantom SmoothingProcessor)
-# ---------------------------------------------------------------------------
 
 def gaussian_process_smoothing(pts):
     """GP regression with RBF + WhiteKernel on each dimension independently."""
@@ -127,7 +80,6 @@ def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
     quats_fixed = np.array(quats_fixed)
 
     weights = _gaussian_kernel(kernel_size, sigma)
-
     smoothed = []
     for i in range(N):
         lo = max(0, i - half_k)
@@ -135,37 +87,23 @@ def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
         local_q = quats_fixed[lo:hi]
         local_w = weights[half_k - (i - lo) : half_k + (hi - i)]
         local_w = local_w / local_w.sum()
-
         r_avg = Rotation.from_quat(local_q[0])
         for j in range(1, len(local_q)):
             r_next = Rotation.from_quat(local_q[j])
             w = local_w[j] / local_w[: j + 1].sum()
             r_avg = Slerp([0, 1], Rotation.concatenate([r_avg, r_next]))([w])[0]
         smoothed.append(r_avg.as_matrix())
-
     return np.stack(smoothed)
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
 
 def compute_gripper_actions(
     hand_state_path: str,
     output_path: str,
-    # min_open_ratio: float = 0.2,
+    # min_open_ratio: float = 0.1,
 ):
-    """
-    Compute smoothed gripper actions from depth-aligned hand keypoints.
-
-    Args:
-        hand_state_path:        hand_state.npz
-        output_path:            gripper_action.npz
-        min_open_ratio:         widths below max_width * this ratio are forced to 0
-    """
     data = np.load(hand_state_path, allow_pickle=True)
-    kpts_3d = data["kpts_3d"]  # (N, 21, 3)
-    hand_detected = data["hand_detected"]  # (N,) bool
+    kpts_3d = data["kpts_3d"]
+    hand_detected = data["hand_detected"]
 
     N = len(kpts_3d)
     print(f"     Processing {N} frames for gripper action computation")
@@ -174,7 +112,7 @@ def compute_gripper_actions(
     ee_oris = np.zeros((N, 3, 3), dtype=np.float32)
     ee_widths = np.zeros(N, dtype=np.float32)
 
-    # ------ 1. Raw per-frame actions ------
+    # per-frame raw actions
     for i in range(N):
         if not hand_detected[i]:
             continue
@@ -183,7 +121,7 @@ def compute_gripper_actions(
         ee_oris[i] = ori
         ee_widths[i] = width
 
-    # ------ 2. Carry-forward interpolation for undetected frames ------
+    # fill undetected frames by carry-forward
     det_idx = np.where(hand_detected)[0]
     if len(det_idx) == 0:
         print("     WARNING: no hand detected in any frame!")
@@ -198,29 +136,21 @@ def compute_gripper_actions(
         return
 
     first = det_idx[0]
-    last_pt = ee_pts[first].copy()
-    last_ori = ee_oris[first].copy()
-    last_w = ee_widths[first]
+    last_pt, last_ori, last_w = ee_pts[first].copy(), ee_oris[first].copy(), ee_widths[first]
     for i in range(N):
         if hand_detected[i]:
-            last_pt = ee_pts[i].copy()
-            last_ori = ee_oris[i].copy()
-            last_w = ee_widths[i]
+            last_pt, last_ori, last_w = ee_pts[i].copy(), ee_oris[i].copy(), ee_widths[i]
         else:
-            ee_pts[i] = last_pt
-            ee_oris[i] = last_ori
-            ee_widths[i] = last_w
+            ee_pts[i], ee_oris[i], ee_widths[i] = last_pt, last_ori, last_w
 
-    # ------ 3. GP smoothing (positions & widths) ------
+    # GP smooth positions and widths
     ee_pts_s = gaussian_process_smoothing(ee_pts).astype(np.float32)
     ee_widths_s = gaussian_process_smoothing(ee_widths).astype(np.float32).ravel()
 
-    # ------ 4. Gaussian SLERP smoothing (orientations) ------
-    ee_oris_s = gaussian_slerp_smoothing(ee_oris, sigma=10.0, kernel_size=41).astype(
-        np.float32
-    )
+    # SLERP smooth orientations
+    ee_oris_s = gaussian_slerp_smoothing(ee_oris, sigma=10.0, kernel_size=41).astype(np.float32)
 
-    # ------ 5. Threshold small widths to zero (= fully closed) ------
+    # threshold small widths to zero (disabled for now)
     # max_width = float(ee_widths_s.max()) if ee_widths_s.max() > 0 else 0.05
     # min_threshold = max_width * min_open_ratio
     # ee_widths_s[ee_widths_s < min_threshold] = 0.0

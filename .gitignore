@@ -44,3 +44,4 @@ sam2/demo/frontend/dist/
 .DS_Store?
 ._*
 Thumbs.db
+.vscode/

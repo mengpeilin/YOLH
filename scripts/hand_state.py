@@ -1,22 +1,4 @@
-"""
-Hand state estimation using HaMeR + ICP depth alignment.
-
-Requires: phantom conda environment (hamer, open3d, trimesh installed).
-
-Pipeline per frame:
-  1. Run HaMeR within DINO bbox → 21 keypoints + MANO mesh
-  2. Ray-cast mesh to find vertices visible from camera origin
-  3. Project visible verts to 2D, look up depth → 3D depth points
-  4. Build point cloud within hand/arm mask
-  5. ICP-align visible mesh to mask point cloud
-  6. Apply alignment transform to keypoints
-
-Saves hand_state.npz:
-  - kpts_3d:        (N, 21, 3)  float32   depth-aligned 3D keypoints (camera frame)
-  - kpts_2d:        (N, 21, 2)  int32      2D keypoint projections
-  - hand_detected:  (N,)        bool
-"""
-
+import sys
 import os
 import numpy as np
 import torch
@@ -24,23 +6,17 @@ import trimesh
 import open3d as o3d
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HAMER_ROOT = os.path.join(PROJECT_ROOT, "phantom", "submodules", "phantom-hamer")
-
-from hamer.models import HAMER, DEFAULT_CHECKPOINT  # type: ignore
-from hamer.utils import recursive_to  # type: ignore
-from hamer.datasets.vitdet_dataset import ViTDetDataset  # type: ignore
-from hamer.utils.renderer import cam_crop_to_full  # type: ignore
-from hamer.utils.geometry import perspective_projection  # type: ignore
-from hamer.configs import get_config  # type: ignore
+HAMER_ROOT = os.path.join(PROJECT_ROOT, "dependencies", "phantom-hamer")
+sys.path.insert(0, HAMER_ROOT)
+from hamer.models import HAMER, DEFAULT_CHECKPOINT
+from hamer.utils import recursive_to
+from hamer.datasets.vitdet_dataset import ViTDetDataset
+from hamer.utils.renderer import cam_crop_to_full
+from hamer.utils.geometry import perspective_projection
+from hamer.configs import get_config
 from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# HaMeR loading & inference
-# ---------------------------------------------------------------------------
-
 def _load_hamer(checkpoint_path=None):
-    """Load HaMeR model and config."""
     if checkpoint_path is None:
         root_dir = HAMER_ROOT
         checkpoint_path = str(Path(root_dir, DEFAULT_CHECKPOINT))
@@ -80,14 +56,6 @@ def _load_hamer(checkpoint_path=None):
 
 
 def _run_hamer_on_frame(model, model_cfg, img_rgb, bbox, hand_side, rescale_factor=2.0):
-    """
-    Run HaMeR on a single frame.
-
-    Uses HaMeR's default focal length (``kpts_2d_only`` mode) since
-    ICP depth alignment corrects the scale later.
-
-    Returns a dict with kpts_3d, kpts_2d, verts, T_cam_pred, … or *None*.
-    """
     bboxes = bbox.reshape(1, 4)
     is_right_val = 1 if hand_side == "right" else 0
     is_right = np.array([is_right_val])
@@ -152,7 +120,6 @@ def _run_hamer_on_frame(model, model_cfg, img_rgb, bbox, hand_side, rescale_fact
 
 
 def _project_3d_to_2d(kpts_3d, img_w, img_h, scaled_focal_length, camera_center, T_cam):
-    """Perspective-project 3D keypoints (HaMeR internal frame) to 2D pixels."""
     rotation = torch.eye(3).unsqueeze(0).cuda()
     kpts = torch.tensor(kpts_3d, dtype=torch.float32).cuda()
     T = T_cam.clone().cuda()
@@ -169,11 +136,6 @@ def _project_3d_to_2d(kpts_3d, img_w, img_h, scaled_focal_length, camera_center,
     ).reshape(1, -1, 2)
 
     return np.rint(kpts_2d[0].cpu().numpy()).astype(np.int32)
-
-
-# ---------------------------------------------------------------------------
-# ICP depth alignment helpers
-# ---------------------------------------------------------------------------
 
 def _get_visible_points(mesh, origin):
     """Return vertices of *mesh* visible from *origin* via ray casting."""
@@ -192,7 +154,6 @@ def _get_visible_points(mesh, origin):
 
 
 def _pixels_to_3d(pixels_2d, depth_img, intrinsics):
-    """Back-project pixel coords + depth image to 3D camera-frame points."""
     px = pixels_2d[:, 0].astype(int)
     py = pixels_2d[:, 1].astype(int)
     depth_mm = depth_img[py, px].astype(np.float32)
@@ -204,7 +165,6 @@ def _pixels_to_3d(pixels_2d, depth_img, intrinsics):
 
 
 def _mask_to_pointcloud(mask, depth_img, intrinsics):
-    """Point cloud from depth within a boolean mask region."""
     ys, xs = np.where(mask)
     if len(xs) == 0:
         return None
@@ -221,12 +181,6 @@ def _mask_to_pointcloud(mask, depth_img, intrinsics):
 
 
 def _depth_align_frame(hamer_out, depth_img, mask, intrinsics, faces):
-    """
-    ICP depth alignment for one frame.
-
-    Returns depth-aligned (21, 3) keypoints in camera frame.
-    Falls back to the raw HaMeR keypoints when alignment is infeasible.
-    """
     verts = hamer_out["verts"]
     kpts_3d = hamer_out["kpts_3d"]
 
@@ -292,11 +246,6 @@ def _depth_align_frame(hamer_out, depth_img, mask, intrinsics, faces):
     kpts_aligned = (T @ kpts_h.T).T[:, :3]
     return kpts_aligned.astype(np.float32)
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def estimate_hand_states(
     npz_path: str,
     hand_bboxes_path: str,
@@ -306,19 +255,6 @@ def estimate_hand_states(
     hamer_checkpoint: str = None,
     rescale_factor: float = 2.0,
 ):
-    """
-    Estimate depth-aligned 3D hand keypoints for all frames.
-
-    Args:
-        npz_path:         raw.npz  (rgb, depth, intrinsic)
-        hand_bboxes_path: hand_bboxes.npz  (bboxes, hand_detected)
-        masks_path:       masks.npz  (masks)
-        output_path:      hand_state.npz  (kpts_3d, kpts_2d, hand_detected)
-        hand_side:        "right" or "left"
-        hamer_checkpoint: path to HaMeR checkpoint (None = default)
-        rescale_factor:   HaMeR bbox padding factor
-    """
-    # Load data
     data = np.load(npz_path, allow_pickle=True)
     rgb_frames = data["rgb"]
     depth_frames = data["depth"]
@@ -338,7 +274,7 @@ def estimate_hand_states(
     masks = mask_data["hand_masks"] if "hand_masks" in mask_data else mask_data["masks"]
 
     N = len(rgb_frames)
-    print(f"     Processing {N} frames for hand state estimation (HaMeR + ICP)")
+    print(f"     Processing {N} frames for hand state estimation")
 
     # Load HaMeR
     model, model_cfg = _load_hamer(hamer_checkpoint)

@@ -1,0 +1,59 @@
+# Camera calibration and deployment configuration
+# Used by inference.py and LeRobot policy
+
+# ─── Camera intrinsics ───
+# RealSense D435i intrinsics [fx, fy, cx, cy]
+camera_intrinsic: [922.3746, 922.4607, 637.5542, 368.3756]
+camera_serial: ""   # RealSense serial number (empty = first available)
+
+# ─── Extrinsic: camera frame → robot base frame ───
+# 4×4 homogeneous transform T such that  p_base = T @ p_cam
+# Obtain via hand-eye calibration (e.g. easy_handeye / opencv)
+# Row-major flattened; will be reshaped to (4,4)
+cam_to_base:
+  - [1.0, 0.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 0.0]
+  - [0.0, 0.0, 0.0, 1.0]
+
+# ─── Workspace bounds (camera frame, metres) ───
+workspace_min: [-0.5, -0.1, 0.0]
+workspace_max: [ 0.5,  0.5, 1.0]
+
+# ─── Safety bounds (base frame, metres) ───
+safe_workspace_min: [0.05, -0.25, 0.0]
+safe_workspace_max: [0.40,  0.25, 0.35]
+safe_eps: 0.002
+
+# ─── Point cloud processing ───
+voxel_size: 0.005           # metres per sparse voxel
+
+# ─── Arm self-filter ───
+# Bounding capsule radius per link (metres). Links not listed are skipped.
+# The gripper links are NOT filtered (gripper is re-inserted synthetically).
+arm_filter:
+  enabled: true
+  capsule_radius:
+    base_link: 0.05
+    shoulder_link: 0.04
+    upper_arm_link: 0.035
+    lower_arm_link: 0.03
+    wrist_link: 0.03
+
+# ─── Inference ───
+num_action: 20              # action horizon
+num_inference_step: 20      # DDIM steps
+ensemble_mode: "act"        # temporal ensemble: new / old / avg / act / hato
+discretize_rotation: true
+rot_step_size: 0.196        # π/16 radians
+gripper_threshold: 0.02     # metres – avoid sending gripper commands too often
+max_steps: 300              # maximum inference steps per episode
+
+# ─── Model architecture (must match training) ───
+model:
+  obs_feature_dim: 512
+  hidden_dim: 512
+  nheads: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 1
+  dropout: 0.1

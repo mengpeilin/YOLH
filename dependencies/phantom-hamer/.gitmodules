@@ -1,0 +1,4 @@
+[submodule "third-party/ViTPose"]
+	path = third-party/ViTPose
+	url = https://github.com/MarionLepert/ViTPose.git
+	branch = main
