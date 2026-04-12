@@ -1,1 +1,1 @@
-from yolh.yolh import YOLH
+from .yolh import YOLH

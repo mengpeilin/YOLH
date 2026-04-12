@@ -5,9 +5,9 @@ import torch.nn as nn
 import einops
 from einops.layers.torch import Rearrange
 
-from yolh.diffusion_modules.conv1d_components import (
+from .conv1d_components import (
     Downsample1d, Upsample1d, Conv1dBlock)
-from yolh.diffusion_modules.positional_embedding import SinusoidalPosEmb
+from .positional_embedding import SinusoidalPosEmb
 
 logger = logging.getLogger(__name__)
 

@@ -1,20 +1,13 @@
 # Camera calibration and deployment configuration
-# Used by inference.py and LeRobot policy
+# Used by inference.py
+camera_intrinsic: [603.0418701171875, 603.035400390625, 330.1463623046875, 243.86166381835938]
+camera_serial: "147122075271"
 
-# ─── Camera intrinsics ───
-# RealSense D435i intrinsics [fx, fy, cx, cy]
-camera_intrinsic: [922.3746, 922.4607, 637.5542, 368.3756]
-camera_serial: ""   # RealSense serial number (empty = first available)
-
-# ─── Extrinsic: camera frame → robot base frame ───
-# 4×4 homogeneous transform T such that  p_base = T @ p_cam
-# Obtain via hand-eye calibration (e.g. easy_handeye / opencv)
-# Row-major flattened; will be reshaped to (4,4)
 cam_to_base:
-  - [1.0, 0.0, 0.0, 0.0]
-  - [0.0, 1.0, 0.0, 0.0]
-  - [0.0, 0.0, 1.0, 0.0]
-  - [0.0, 0.0, 0.0, 1.0]
+  - [-0.4802232769739588, -0.34170456001833455,  0.8078512226363649,  0.302036088870308]
+  - [-0.20183312039308804, -0.8532388525045358, -0.4808813284887785,  0.11299002053003587]
+  - [ 0.8536093929689287, -0.39398154048054074,  0.34077786019018036,  0.2360758783325807]
+  - [ 0.0, 0.0, 0.0, 1.0]
 
 # ─── Workspace bounds (camera frame, metres) ───
 workspace_min: [-0.5, -0.1, 0.0]

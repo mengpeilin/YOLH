@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from einops import reduce
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 
-from yolh.diffusion_modules.conditional_unet1d import ConditionalUnet1D
-from yolh.diffusion_modules.mask_generator import LowdimMaskGenerator
+from .diffusion_modules.conditional_unet1d import ConditionalUnet1D
+from .diffusion_modules.mask_generator import LowdimMaskGenerator
 
 class DiffusionUNetPolicy(nn.Module):
     def __init__(self,

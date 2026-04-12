@@ -167,7 +167,7 @@ class RealSenseSO101Interface(RobotInterface):
     # ────────────────────────────── Observation ─────────────────────────
 
     def get_observation(self) -> tuple:
-        import pyrealsense2 as rs  # noqa: F811
+        import pyrealsense2 as rs
 
         frames = self._rs_pipeline.wait_for_frames()
         aligned = self._rs_align.process(frames)

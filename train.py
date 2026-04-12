@@ -245,7 +245,7 @@ def main():
     parser.add_argument("--resume-epoch", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--batch-size", type=int, default=48)
-    parser.add_argument("--num-epochs", type=int, default=1000)
+    parser.add_argument("--num-epochs", type=int, default=300)
     parser.add_argument("--save-epochs", type=int, default=50)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=233)

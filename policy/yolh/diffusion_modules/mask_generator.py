@@ -1,7 +1,7 @@
 from typing import Sequence, Optional
 import torch
 from torch import nn
-from yolh.diffusion_modules.module_attr_mixin import ModuleAttrMixin
+from .module_attr_mixin import ModuleAttrMixin
 
 
 def get_intersection_slice_mask(

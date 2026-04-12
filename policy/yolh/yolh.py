@@ -3,9 +3,9 @@ import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms as transforms
 
-from yolh.tokenizer import Sparse3DEncoder
-from yolh.transformer import Transformer
-from yolh.diffusion import DiffusionUNetPolicy
+from .tokenizer import Sparse3DEncoder
+from .transformer import Transformer
+from .diffusion import DiffusionUNetPolicy
 
 
 class YOLH(nn.Module):

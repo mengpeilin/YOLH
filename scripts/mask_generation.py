@@ -11,8 +11,9 @@ sys.path.insert(0, SAM2_ROOT)
 from sam2.build_sam import build_sam2_video_predictor
 
 
-def _select_user_bbox(rgb_frame, window_name="Draw BBox on hand+arm"):
-
+def _select_user_bbox(npz_path, window_name="Draw BBox on hand+arm"):
+    data = np.load(npz_path, allow_pickle=True)
+    rgb_frame = data["rgb"][0]
     bbox = []
     cursor = [None]
 
@@ -90,6 +91,7 @@ def generate_masks(
     sam2_config: str,
     device: str = "auto",
     hand_bboxes_path: str = None,
+    arm_bboxes_path: str = None,
 ):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -106,15 +108,17 @@ def generate_masks(
     print(f"     Loaded {num_frames} frames from {npz_path}")
 
     # Branch A: user-provided bbox for full hand+arm removal mask
-    arm_hand_bbox = _select_user_bbox(rgb_frames[0], "Draw BBox on hand+arm")
+    if arm_bboxes_path is None:
+        raise ValueError("arm_bboxes_path is required to generate arm+hand masks")
+    arm_data = np.load(arm_bboxes_path, allow_pickle=True)
+    arm_hand_bbox = arm_data["arm_hand_bbox"].astype(np.float32)
     arm_hand_init_frame = 0
     print(f"     User arm+hand bbox (frame 0): {arm_hand_bbox}")
 
     # Branch B: auto bbox from step 01 for hand-only mask
     if hand_bboxes_path is None:
         raise ValueError("hand_bboxes_path is required to generate hand-only masks")
-
-    if hand_bboxes_path is not None:
+    else:
         bbox_data = np.load(hand_bboxes_path, allow_pickle=True)
         bboxes = bbox_data["bboxes"]
         det = bbox_data["hand_detected"]
