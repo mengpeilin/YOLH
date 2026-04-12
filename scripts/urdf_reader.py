@@ -11,29 +11,6 @@ SO101_URDF_PATH = os.path.join(
 _GRIPPER_MODEL_CACHE = {}
 _URDF_DATA_CACHE = {}
 
-
-def rgbd_to_points(rgb, depth, intrinsic, mask=None):
-    """Convert RGB-D image to point cloud."""
-    fx, fy, cx, cy = intrinsic
-    H, W = depth.shape
-    u, v = np.meshgrid(np.arange(W), np.arange(H))
-
-    depth_m = depth.astype(np.float32) / 1000.0
-    valid = depth_m > 0
-
-    # Exclude masked pixels.
-    if mask is not None:
-        valid = valid & (~mask)
-
-    z = depth_m[valid]
-    x = (u[valid] - cx) * z / fx
-    y = (v[valid] - cy) * z / fy
-
-    coords = np.stack([x, y, z], axis=-1).astype(np.float32)
-    colors = rgb[valid].astype(np.float32) / 255.0
-    return coords, colors
-
-
 def _rpy_to_rot(rpy):
     roll, pitch, yaw = rpy
     cr, sr = np.cos(roll), np.sin(roll)

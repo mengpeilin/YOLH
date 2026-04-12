@@ -110,7 +110,7 @@ def main():
     print("############# 05  gripper_insertion ###########")
     run([
         sys.executable,
-        pipeline_dir / "05_gripper_insertion.py",
+        pipeline_dir / "05_point_cloud.py",
         "--data-dir",
         output_dir,
         "--config",

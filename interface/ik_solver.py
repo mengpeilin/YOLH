@@ -21,56 +21,13 @@ Coordinate conventions
 - The FK output is a 4×4 homogeneous matrix T_base_tcp.
 """
 
-import os
 import numpy as np
 import xml.etree.ElementTree as ET
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
+
+from policy.utils.transformation import make_transform, parse_origin, rot_z_transform
 
 __all__ = ["SO101IKSolver"]
-
-# ────────────────────────────────────────────────────────────────────────
-# Helpers
-# ────────────────────────────────────────────────────────────────────────
-
-def _rpy_to_rot(rpy: np.ndarray) -> np.ndarray:
-    roll, pitch, yaw = rpy
-    cr, sr = np.cos(roll), np.sin(roll)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]], dtype=np.float64)
-    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]], dtype=np.float64)
-    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]], dtype=np.float64)
-    return rz @ ry @ rx
-
-
-def _make_tf(xyz: np.ndarray, rpy: np.ndarray) -> np.ndarray:
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = _rpy_to_rot(rpy)
-    T[:3, 3] = xyz
-    return T
-
-
-def _parse_origin(elem) -> Tuple[np.ndarray, np.ndarray]:
-    origin = elem.find("origin") if elem is not None else None
-    if origin is None:
-        return np.zeros(3, dtype=np.float64), np.zeros(3, dtype=np.float64)
-    xyz = np.fromstring(origin.get("xyz", "0 0 0"), sep=" ", dtype=np.float64)
-    rpy = np.fromstring(origin.get("rpy", "0 0 0"), sep=" ", dtype=np.float64)
-    if xyz.size != 3:
-        xyz = np.zeros(3, dtype=np.float64)
-    if rpy.size != 3:
-        rpy = np.zeros(3, dtype=np.float64)
-    return xyz, rpy
-
-
-def _rot_z(angle: float) -> np.ndarray:
-    """4×4 rotation about z-axis."""
-    c, s = np.cos(angle), np.sin(angle)
-    T = np.eye(4, dtype=np.float64)
-    T[0, 0] = c; T[0, 1] = -s
-    T[1, 0] = s; T[1, 1] = c
-    return T
-
 
 def _so3_log(R: np.ndarray) -> np.ndarray:
     """Logarithmic map SO(3) → ℝ³  (axis-angle vector)."""
@@ -162,7 +119,7 @@ class SO101IKSolver:
             jtype = jt.get("type", "fixed")
             parent = jt.find("parent").get("link") if jt.find("parent") is not None else None
             child = jt.find("child").get("link") if jt.find("child") is not None else None
-            xyz, rpy = _parse_origin(jt)
+            xyz, rpy = parse_origin(jt)
             limit_elem = jt.find("limit")
             lower = float(limit_elem.get("lower", "-3.14")) if limit_elem is not None else -np.pi
             upper = float(limit_elem.get("upper", "3.14")) if limit_elem is not None else np.pi
@@ -170,7 +127,7 @@ class SO101IKSolver:
                 "type": jtype,
                 "parent": parent,
                 "child": child,
-                "origin_tf": _make_tf(xyz, rpy),
+                "origin_tf": make_transform(xyz, rpy),
                 "lower": lower,
                 "upper": upper,
             }
@@ -198,7 +155,7 @@ class SO101IKSolver:
         """Compute TCP pose (4×4) in base frame from joint angles *q* (5,)."""
         T = np.eye(4, dtype=np.float64)
         for i in range(5):
-            T = T @ self._chain_tf[i] @ _rot_z(float(q[i]))
+            T = T @ self._chain_tf[i] @ rot_z_transform(float(q[i]))
         T = T @ self._tcp_tf
         return T
 
@@ -209,7 +166,7 @@ class SO101IKSolver:
         for i in range(5):
             T = T @ self._chain_tf[i]
             frames.append(T.copy())      # frame BEFORE rotation
-            T = T @ _rot_z(float(q[i]))
+            T = T @ rot_z_transform(float(q[i]))
         return frames
 
     # ── Numerical Jacobian ──────────────────────────────────────────────
@@ -232,7 +189,7 @@ class SO101IKSolver:
             # Angular velocity: z_i
             J[3:, i] = z_i
             # Accumulate rotation for this joint
-            T_accum = T_accum @ _rot_z(float(q[i]))
+            T_accum = T_accum @ rot_z_transform(float(q[i]))
 
         return J
 

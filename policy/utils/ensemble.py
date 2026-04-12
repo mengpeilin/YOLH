@@ -1,85 +1,56 @@
-"""
-Temporal Ensemble.
-"""
+"""Utilities for temporal action chunk buffering and inference runtime state."""
 
-import torch
+import threading
+
 import numpy as np
-from collections import deque
 
 
 class EnsembleBuffer:
-    """
-    Temporal ensemble buffer.
-    """
-    def __init__(self, mode = "new", **kwargs):
-        assert mode in ["new", "old", "avg", "act", "hato"], "Ensemble mode {} not supported.".format(mode)
+    def __init__(self, mode: str = "act", k: float = 0.01, hold_last: bool = True):
         self.mode = mode
-        self.timestep = 0
-        self.actions_start_timestep = 0
-        self.actions = deque([])
-        self.actions_timestep = deque([])
-        self.action_shape = None
-        if mode == "act":
-            self.k = kwargs.get("k", 0.01)
-        if mode == "hato":
-            self.tau = kwargs.get("tau", 0.5)
-    
-    def add_action(self, action, timestep):
-        """
-        Add action to the ensemble buffer:
+        self.k = k
+        self.hold_last = hold_last
+        self._chunks = []
+        self._last_action = None
+        self._lock = threading.Lock()
 
-        Parameters:
-        - action: horizon x action_dim (...);
-        - timestep: action[0]'s timestep.
-        """
-        action = np.array(action)
-        if self.action_shape == None:
-            self.action_shape = action.shape[1:]
-        else:
-            assert self.action_shape == action.shape[1:], "Incompatible action shape."
-        idx = timestep - self.actions_start_timestep
-        horizon = action.shape[0]
-        while idx + horizon - 1 >= len(self.actions):
-            self.actions.append([])
-            self.actions_timestep.append([])
-        for i in range(idx, idx + horizon):
-            self.actions[i].append(action[i - idx, ...])
-            self.actions_timestep[i].append(timestep)
-    
-    def get_action(self):
-        """
-        Get ensembled action from buffer.
-        """
-        if self.timestep - self.actions_start_timestep >= len(self.actions):
-            self.timestep += 1
-            return None      # no data
-        while self.actions_start_timestep < self.timestep:
-            self.actions.popleft()
-            self.actions_timestep.popleft()
-            self.actions_start_timestep += 1
-        actions = self.actions[0]
-        actions_timestep = self.actions_timestep[0]
-        if actions == []:
-            self.timestep += 1
-            return None      # no data
-        sorted_actions = sorted(zip(actions_timestep, actions))
-        all_actions = [x for _, x in sorted_actions]
-        all_timesteps = [t for t, _ in sorted_actions]
-        if self.mode == "new":
-            action = all_actions[-1]
-        elif self.mode == "old":
-            action = all_actions[0]
-        elif self.mode == "avg":
-            action = np.array(all_actions).mean(axis = 0)
-        elif self.mode == "act":
-            weights = np.exp(-self.k * (self.timestep - np.array(all_timesteps)))
-            weights = weights / weights.sum()
-            action = (all_actions * weights.reshape((-1,) + (1,) * len(self.action_shape))).sum(axis = 0)
-        elif self.mode == "hato":
-            weights = self.tau ** (self.timestep - np.array(all_timesteps))
-            weights = weights / weights.sum()
-            action = (all_actions * weights.reshape((-1,) + (1,) * len(self.action_shape))).sum(axis = 0)
-        else:
-            raise AttributeError("Ensemble mode {} not supported.".format(self.mode))
-        self.timestep += 1
-        return action
+    def add_chunk(self, actions: np.ndarray, start_step: int):
+        if actions is None or len(actions) == 0:
+            return
+        with self._lock:
+            self._chunks.append((start_step, np.asarray(actions, dtype=np.float32)))
+
+    def get_action(self, step: int):
+        with self._lock:
+            self._chunks = [
+                (start_step, actions)
+                for start_step, actions in self._chunks
+                if start_step + len(actions) > step
+            ]
+
+            candidates = []
+            for start_step, actions in self._chunks:
+                idx = step - start_step
+                if 0 <= idx < len(actions):
+                    candidates.append((start_step, actions[idx]))
+
+            if not candidates:
+                return None if not self.hold_last else self._last_action
+
+            candidates.sort(key=lambda item: item[0])
+            start_steps = np.array([item[0] for item in candidates], dtype=np.float32)
+            action_list = np.stack([item[1] for item in candidates], axis=0)
+
+            if self.mode == "old":
+                action = action_list[0]
+            elif self.mode == "new":
+                action = action_list[-1]
+            elif self.mode == "avg":
+                action = action_list.mean(axis=0)
+            else:
+                weights = np.exp(-self.k * (step - start_steps))
+                weights = weights / np.clip(weights.sum(), 1e-8, None)
+                action = (action_list * weights[:, None]).sum(axis=0)
+
+            self._last_action = action.astype(np.float32)
+            return self._last_action

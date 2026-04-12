@@ -19,9 +19,14 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pyrealsense2 as rs
+
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
 
 from policy.robot_interface import RobotInterface
-from policy.utils.action import rot6d_to_matrix
+from policy.utils.transformation import rot6d_to_matrix
+from scripts.urdf_reader import _get_urdf_data, width_to_jaw_angle
 from interface.ik_solver import SO101IKSolver
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +49,20 @@ JOINT_NAMES = [
 def _load_motor_config(path: str) -> dict:
     with open(path, "r") as f:
         return json.load(f)
+
+
+def _build_motor_calibration(motor_cfg: dict) -> dict[str, MotorCalibration]:
+    calibration = {}
+    for jname in JOINT_NAMES:
+        cfg = motor_cfg[jname]
+        calibration[jname] = MotorCalibration(
+            id=cfg["id"],
+            drive_mode=cfg["drive_mode"],
+            homing_offset=cfg["homing_offset"],
+            range_min=cfg["range_min"],
+            range_max=cfg["range_max"],
+        )
+    return calibration
 
 
 def _tick_to_rad(tick: int, homing_offset: int, drive_mode: int = 0) -> float:
@@ -92,6 +111,7 @@ class RealSenseSO101Interface(RobotInterface):
         if motor_config_path is None:
             motor_config_path = str(PROJECT_ROOT / "configs" / "lerobot.json")
         self.motor_cfg = _load_motor_config(motor_config_path)
+        self._motor_calibration = _build_motor_calibration(self.motor_cfg)
 
         # ── IK solver ──
         if urdf_path is None:
@@ -122,34 +142,30 @@ class RealSenseSO101Interface(RobotInterface):
     def _init_motors(self):
         """Initialise motor bus.
 
-        Uses the ``lerobot`` library's Dynamixel bus if available,
-        otherwise falls back to a minimal serial implementation.
+        Uses the vendored ``lerobot`` Feetech bus implementation.
         """
-        try:
-            from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+        motor_dict = {
+            "shoulder_pan": Motor(1, "sts3215", MotorNormMode.DEGREES),
+            "shoulder_lift": Motor(2, "sts3215", MotorNormMode.DEGREES),
+            "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
+            "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
+            "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
+            "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+        }
+        for jname, motor in motor_dict.items():
+            motor.id = self.motor_cfg[jname]["id"]
 
-            motor_dict = {}
-            for jname in JOINT_NAMES:
-                mc = self.motor_cfg[jname]
-                motor_dict[jname] = (mc["id"], "sts3215")
-            self._bus = FeetechMotorsBus(
-                port=self.serial_port,
-                motors=motor_dict,
-            )
-            self._bus.connect()
-            print(f"[SO101] Connected to Feetech bus on {self.serial_port}")
-        except ImportError:
-            print(
-                "[SO101] WARNING: lerobot.common.robot_devices.motors.feetech not found. "
-                "Motor read/write will raise NotImplementedError."
-            )
-            self._bus = None
+        self._bus = FeetechMotorsBus(
+            port=self.serial_port,
+            motors=motor_dict,
+            calibration=self._motor_calibration,
+        )
+        self._bus.connect()
+        print(f"[SO101] Connected to Feetech bus on {self.serial_port}")
 
     # ────────────────────────────── Camera init ─────────────────────────
 
     def _init_camera(self, cfg: dict):
-        import pyrealsense2 as rs
-
         self._rs_pipeline = rs.pipeline()
         rs_config = rs.config()
         serial = cfg.get("camera_serial", "")
@@ -167,8 +183,6 @@ class RealSenseSO101Interface(RobotInterface):
     # ────────────────────────────── Observation ─────────────────────────
 
     def get_observation(self) -> tuple:
-        import pyrealsense2 as rs
-
         frames = self._rs_pipeline.wait_for_frames()
         aligned = self._rs_align.process(frames)
         color_frame = aligned.get_color_frame()
@@ -185,11 +199,11 @@ class RealSenseSO101Interface(RobotInterface):
             raise NotImplementedError(
                 "Motor bus is not connected. Install lerobot and check serial port."
             )
-        positions = self._bus.read("Present_Position")
+        positions = self._bus.sync_read("Present_Position", JOINT_NAMES, normalize=False)
         q = np.zeros(5, dtype=np.float64)
         for i, jname in enumerate(JOINT_NAMES[:5]):
             mc = self.motor_cfg[jname]
-            tick = int(positions[i])
+            tick = int(positions[jname])
             q[i] = _tick_to_rad(tick, mc["homing_offset"], mc["drive_mode"])
         return q
 
@@ -197,12 +211,10 @@ class RealSenseSO101Interface(RobotInterface):
         """Read current gripper width (metres) from gripper motor."""
         if self._bus is None:
             raise NotImplementedError("Motor bus not connected.")
-        positions = self._bus.read("Present_Position")
+        positions = self._bus.sync_read("Present_Position", JOINT_NAMES, normalize=False)
         mc = self.motor_cfg["gripper"]
-        tick = int(positions[5])
+        tick = int(positions["gripper"])
         angle = _tick_to_rad(tick, mc["homing_offset"], mc["drive_mode"])
-        # Gripper angle → width conversion uses urdf_reader
-        from scripts.urdf_reader import width_to_jaw_angle, _get_urdf_data
         d = _get_urdf_data()
         # Inverse of width_to_jaw_angle: ratio = (angle - lower) / (upper - lower)
         lower, upper = d["jaw_lower"], d["jaw_upper"]
@@ -243,27 +255,26 @@ class RealSenseSO101Interface(RobotInterface):
         self._last_q = q.copy()
 
         # ── Gripper angle ──
-        from scripts.urdf_reader import width_to_jaw_angle
         max_w = float(self.cfg.get("max_gripper_width", 0.11))
         gripper_angle = width_to_jaw_angle(width, max_w)
 
-        # ── Build tick array ──
-        ticks = np.zeros(6, dtype=np.int32)
+        # ── Build goal position map ──
+        goal_positions = {}
         for i, jname in enumerate(JOINT_NAMES[:5]):
             mc = self.motor_cfg[jname]
             tick = _rad_to_tick(float(q[i]), mc["homing_offset"], mc["drive_mode"])
             tick = int(np.clip(tick, mc["range_min"], mc["range_max"]))
-            ticks[i] = tick
+            goal_positions[jname] = tick
 
         mc_g = self.motor_cfg["gripper"]
         tick_g = _rad_to_tick(gripper_angle, mc_g["homing_offset"], mc_g["drive_mode"])
         tick_g = int(np.clip(tick_g, mc_g["range_min"], mc_g["range_max"]))
-        ticks[5] = tick_g
+        goal_positions["gripper"] = tick_g
 
         # ── Write to bus ──
         if self._bus is None:
             raise NotImplementedError("Motor bus not connected.")
-        self._bus.write("Goal_Position", ticks.tolist())
+        self._bus.sync_write("Goal_Position", goal_positions, normalize=False)
 
     # ────────────────────────────── Stop ────────────────────────────────
 

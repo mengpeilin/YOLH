@@ -27,11 +27,11 @@ import torch.nn as nn
 import torch.distributed as dist
 import MinkowskiEngine as ME
 from tqdm import tqdm
-from dataset.yolh_dataset import YolhDataset, collate_fn  # noqa: E402
+from dataset.yolh_dataset import YolhDataset, collate_fn
 # -- path setup -------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
-from policy.yolh import YOLH  # noqa: E402
-from policy.utils.training import set_seed, plot_history, sync_loss  # noqa: E402
+from policy.yolh import YOLH
+from policy.utils.training import set_seed, plot_history, sync_loss
 
 
 

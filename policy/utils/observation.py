@@ -3,8 +3,7 @@
 import numpy as np
 
 from policy.utils.constants import IMG_MEAN, IMG_STD
-from scripts.urdf_reader import rgbd_to_points
-
+from policy.utils.transformation import rgbd_to_points
 
 def build_observation_cloud(
     rgb: np.ndarray,
@@ -31,7 +30,7 @@ def build_observation_cloud(
     ws_max = cfg["workspace_max"]
 
     # 1. RGB-D → points
-    coords, colors = rgbd_to_points(rgb, depth, intrinsic, mask=None)
+    coords, colors = rgbd_to_points(rgb, depth, intrinsic)
     if len(coords) == 0:
         return np.zeros((0, 6), dtype=np.float32)
 

@@ -9,6 +9,8 @@ Serialization uses pickle over a trusted local network.
 """
 
 import pickle
+from typing import Optional
+
 import zmq
 
 OBS_PORT = 5555
@@ -47,7 +49,7 @@ class ZmqReceiver:
         else:
             self._sock.bind(f"tcp://*:{port}")
 
-    def recv(self, timeout_ms: int = -1) -> dict | None:
+    def recv(self, timeout_ms: int = -1) -> Optional[dict]:
         """Blocking recv. Returns None on timeout when *timeout_ms* >= 0."""
         if timeout_ms >= 0:
             if self._sock.poll(timeout_ms):
@@ -55,7 +57,7 @@ class ZmqReceiver:
             return None
         return pickle.loads(self._sock.recv())
 
-    def recv_latest(self) -> dict | None:
+    def recv_latest(self) -> Optional[dict]:
         """Drain queue and return only the most recent message."""
         latest = None
         while self._sock.poll(0):
