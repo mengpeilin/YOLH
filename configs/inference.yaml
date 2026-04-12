@@ -35,12 +35,10 @@ arm_filter:
 
 # ─── Inference ───
 num_action: 20              # action horizon
-num_inference_step: 20      # DDIM steps
 ensemble_mode: "act"        # temporal ensemble: new / old / avg / act / hato
 discretize_rotation: true
 rot_step_size: 0.196        # π/16 radians
 gripper_threshold: 0.02     # metres – avoid sending gripper commands too often
-max_steps: 300              # maximum inference steps per episode
 
 # ─── Model architecture (must match training) ───
 model:
