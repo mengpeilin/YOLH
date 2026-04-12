@@ -4,7 +4,6 @@
 *.weights
 *.pb
 *.onnx
-/WiLoR/pretrained_models/
 /sam2/checkpoints/
 
 *.mp4
@@ -12,15 +11,11 @@
 *.gif
 *.zip
 *.tar.gz
-/WiLoR/demo_img/
 /sam2/notebooks/videos/
 /sam2/notebooks/images/
-/hand_object_detector/assets/
-/Data/
 
 *.pkl
 *.npz
-/WiLoR/mano_data/
 
 __pycache__/
 *.py[cod]
@@ -45,3 +40,4 @@ sam2/demo/frontend/dist/
 ._*
 Thumbs.db
 .vscode/
+_DATA/
