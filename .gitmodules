@@ -4,3 +4,6 @@
 [submodule "dependencies/phantom-hamer"]
 	path = dependencies/phantom-hamer
 	url = https://github.com/MarionLepert/phantom-hamer.git
+[submodule "URDF/SO-ARM100"]
+	path = URDF/SO-ARM100
+	url = https://github.com/TheRobotStudio/SO-ARM100.git
