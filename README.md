@@ -1,123 +1,175 @@
-# YOLH — You Only Learn from Humans
+# YOLH
 
-A robotics imitation learning framework that trains manipulation models directly from human demonstrations captured with an overhead RGB-D camera — no language conditioning, no simulation required.
+YOLH is a robot imitation learning project built on RGB-D demonstrations. The repository focuses on three core workflows:
 
-## Overview
+- Offline data pipeline: convert ROS2 bags into trainable point-cloud/action datasets.
+- Policy training: train the YOLH policy with sparse 3D encoding and temporal action decoding.
+- Online deployment: run two-machine observation, remote inference, action feedback, and SO-101 control.
 
-YOLH records a human hand performing manipulation tasks, processes the raw RGB-D video through a 6-stage pipeline, and trains a vision-based PerAct model to reproduce the behavior. The trained model outputs 6-DoF actions (3D position + rotation + gripper state) from voxelized scene observations.
+The repository also includes vendored third-party source trees. Day-to-day development is usually concentrated in the root scripts, scripts, yolh_pipeline, policy, interface, and dataset directories.
 
-**Hardware:** Intel RealSense D435i mounted above a table + [URDF/SO-ARM100](URDF/SO-ARM100/) 6-DOF robot arm
+## Repository Layout
 
-## Pipeline
-
+```text
+YOLH/
+├── arm_control.py              # Robot-side control client
+├── inference.py                # Inference server
+├── test_inference.py           # FK replay debug server
+├── train.py                    # Training entrypoint
+├── run_yolh_pipeline.py        # One-command offline pipeline launcher
+├── configs/                    # Inference, calibration, and pipeline configs
+├── dataset/                    # Training dataset wrapper
+├── interface/                  # Robot interface, IK, and ZMQ transport
+├── policy/                     # YOLH model and inference utilities
+├── scripts/                    # Core logic for each processing stage
+├── yolh_pipeline/              # Batch wrappers for stages 00-06
+├── URDF/                       # SO-ARM100 / SO-101 models and hardware assets
+├── lerobot/                    # Vendored LeRobot code
+└── dependencies/               # Source trees for SAM2, HaMeR, MinkowskiEngine, PyTorch3D, etc.
 ```
-ROS2 bag → RGB-D frames → arm mask → hand state → hand pose → keyframes → voxels → training data
+
+## Environment Setup
+
+Base environment for training and inference:
+
+```bash
+conda env create -f environment.yml
+conda activate yolh
 ```
 
-| Step | Script | Conda Env | Output |
-|------|--------|-----------|--------|
-| 00 — Extract frames | `00_ros2bag_process.py` | system Python | `raw.npz` |
-| 01 — Mask arm | `01_mask_generation.py` | `sam2` | `masks.npz` |
-| 02 — Hand open/close | `02_hand_openclose.py` | `handstate` | `hand_states.npy` |
-| 03 — Hand pose | `03_hand_pose.py` | `wilor` | `hand_pose.npz` |
-| 04 — Keyframes | `04_keyframe_detection.py` | — | `keyframes.npy` |
-| 05 — Voxelize | `05_voxelization.py` | — | `episodes.npz` |
-| 06 — Merge dataset | `06_generate_dataset.py` | — | `train_dataset.npz` |
+The offline pipeline also expects two additional environments by default:
 
-## Quick Start
+- `sam2`: used by `02_mask_generation.py`
+- `phantom`: used for hand bbox detection, hand state estimation, and gripper action estimation
 
-### 1. Run the full pipeline
+`run_yolh_pipeline.py` lets you override these names with `--sam2-env` and `--phantom-env`.
+
+Notes:
+
+- `dependencies/` keeps source code for related dependencies, but not all of them are installed automatically in the base environment.
+- `scripts/hand_state.py` imports HaMeR directly from `dependencies/phantom-hamer/`.
+- If you plan to run the full offline pipeline end-to-end, check the README files inside the vendored dependency folders as well.
+
+## Data Pipeline
+
+Full pipeline entrypoint:
 
 ```bash
 python run_yolh_pipeline.py \
-    --input-dir /path/to/ros2bags \
-    --output-dir data/ \
-    --task-name pick_cup
+  --input-dir /path/to/ros2bags \
+  --output-dir /path/to/output \
+  --task-name pick_cup \
+  --config configs/pipeline.yaml
 ```
 
-Or run steps individually from `yolh_pipeline/`.
+Each `rosbag*` generates a same-name session directory under the output path. Stage outputs are:
 
-### 2. Train the model (Docker)
+| Step | Script | Main Inputs | Main Outputs |
+| --- | --- | --- | --- |
+| 00 | `yolh_pipeline/00_ros2bag_process.py` | ROS2 bag | `raw.npz` |
+| 01 | `yolh_pipeline/01_hand_bbox.py` | `raw.npz` | `hand_bboxes.npz` |
+| 02 | `yolh_pipeline/02_mask_generation.py` | `raw.npz`, hand bboxes | `arm_bboxes.npz`, `masks.npz` |
+| 03 | `yolh_pipeline/03_hand_state.py` | `raw.npz`, hand bboxes, mask | `hand_state.npz` |
+| 04 | `yolh_pipeline/04_gripper_action.py` | `hand_state.npz` | `gripper_action.npz` |
+| 05 | `yolh_pipeline/05_point_cloud.py` | `raw.npz`, `masks.npz`, `gripper_action.npz` | `episodes.npz` |
+| 06 | `yolh_pipeline/06_generate_dataset.py` | multiple sessions | `train_dataset.npz` |
+
+`train_dataset.npz` includes at least the following fields:
+
+- `clouds`
+- `actions`
+- `actions_normalized`
+- `trans_min`
+- `trans_max`
+- `max_gripper_width`
+
+These normalization statistics are loaded again in `inference.py` to map policy outputs back to physical units.
+
+## Training
+
+Single GPU:
 
 ```bash
-# Build image
-docker build -t peract .
-
-# Launch container
-bash run_peract.sh
-
-# Train inside container
 python train.py \
-    --dataset /app/data/train_dataset.npz \
-    --task-name pick_cup \
-    --output-dir /app/data/checkpoints/pick_cup \
-    --batch-size 2 \
-    --epochs 100 \
-    --lr 5e-4 \
-    --optimizer lamb \
-    --voxel-size 100 \
-    --rotation-resolution 5 \
-    --num-latents 2048 \
-    --transformer-depth 6 \
-    --save-every 10
+  --dataset /path/to/train_dataset.npz \
+  --ckpt-dir /path/to/checkpoints
 ```
 
-Checkpoints are saved to `data/checkpoints/{task_name}/`.
+Multi-GPU:
 
-## Repository Structure
-
-```
-YOLH/
-├── run_yolh_pipeline.py           # Full pipeline orchestrator
-├── train.py                       # PerAct training script
-├── Dockerfile / run_peract.sh     # Docker environment
-│
-├── scripts/                       # Core processing modules
-├── yolh_pipeline/                 # Batch pipeline wrappers (00–06)
-│
-├── peract/                        # PerAct model (vision-only variant)
-│   └── agents/peract_bc/
-│       ├── perceiver_io.py        # Vision-only PerceiverIO encoder
-│       └── yolh_agent.py         # YOLH Q-attention agent
-│
-├── WiLoR/                         # Hand pose estimation (CVPR 2025)
-├── hand_object_detector/          # Hand-object detection (CVPR 2020)
-├── dependencies/sam2/             # Segment Anything Model v2
-└── URDF/SO-ARM100/                     # Robot arm hardware (STL files, specs)
+```bash
+torchrun --nproc_per_node=2 train.py \
+  --dataset /path/to/train_dataset.npz \
+  --ckpt-dir /path/to/checkpoints \
+  --batch-size 48
 ```
 
-## Action Format
+Training artifacts:
 
-Actions are 13-dimensional vectors:
+- periodic checkpoints: `policy_epoch_*.ckpt`
+- final model: `policy_last.ckpt`
 
+Model implementation lives in `policy/yolh/`. The current training entrypoint uses:
+
+- a sparse 3D encoder
+- a Transformer readout layer
+- an action diffusion decoder
+
+## Online Inference and Control
+
+YOLH online deployment follows a two-machine setup:
+
+- robot side: capture RGB-D, read joint angles, execute actions
+- inference side: receive observations, build point clouds, run policy, send action chunks
+
+Start on the inference machine:
+
+```bash
+python inference.py \
+  --ckpt /path/to/policy_last.ckpt \
+  --config configs/inference.yaml \
+  --dataset-meta /path/to/train_dataset.npz \
+  --urdf URDF/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
 ```
-[x, y, z,                     # 3D gripper position (world coords)
- r00, r01, r02,                # 3x3 rotation matrix (row-major)
- r10, r11, r12,
- r20, r21, r22,
- gripper_open]                 # 1 = open, 0 = closed
+
+Start on the robot machine:
+
+```bash
+python arm_control.py \
+  --config configs/inference.yaml \
+  --host 192.168.1.100 \
+  --serial-port /dev/ttyACM0
 ```
 
-## Pretrained Models
+For debugging:
 
-| Model | Location | Purpose |
-|-------|----------|---------|
-| WiLoR detector | `WiLoR/pretrained_models/detector.pt` | Hand detection |
-| WiLoR reconstructor | `WiLoR/pretrained_models/wilor_final.ckpt` | Hand mesh |
-| Hand-object detector | (download from Google Drive) | Interaction detection |
-| SAM2 checkpoints | `dependencies/sam2/checkpoints/` | Arm segmentation |
+```bash
+python test_inference.py \
+  --config configs/inference.yaml \
+  --dataset-meta /path/to/train_dataset.npz \
+  --urdf URDF/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
+```
 
-## Key Dependencies
+This mode does not run the policy. It replays actions from FK of current joint angles, which is useful for validating ZMQ transport, coordinate conventions, and execution flow.
 
-- PyTorch 1.11.0 (CUDA 11.3)
-- [WiLoR](https://github.com/rolpotamias/WiLoR) — 3D hand pose estimation
-- [SAM2](https://github.com/facebookresearch/sam2) — segmentation
-- [PerAct](https://github.com/peract/peract) — voxel-based transformer policy
-- RLBench / PyRep / YARR — robotics simulation stack
-- PyTorch3D, trimesh — 3D geometry
+## Key Configs
 
-## Notes
+- `configs/pipeline.yaml`: per-stage offline pipeline parameters
+- `configs/inference.yaml`: camera intrinsics, camera-to-base extrinsics, workspace, and inference parameters
+- `configs/lerobot.json`: motor IDs, homing offsets, and range calibration
 
-- Per-task models: train a separate model for each manipulation task (e.g., `pick_cup`, `pour_water`)
-- Voxel grid resolution: 100×100×100 by default
-- Each pipeline step runs in its own conda environment due to conflicting dependencies
+## Scope Boundaries
+
+Focus here for project development:
+
+- `scripts/` and `yolh_pipeline/`: data processing
+- `policy/`: model and inference logic
+- `interface/`: robot interface and communication
+- `dataset/`: training data loading
+
+These directories are mainly vendored dependencies and should generally be left unchanged unless you intentionally patch upstream code:
+
+- `dependencies/`
+- `lerobot/`
+
+Also, `policy/README.md` records attribution and source information for part of the policy code.

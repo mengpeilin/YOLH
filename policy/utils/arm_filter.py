@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple
 
 from policy.utils.transformation import make_transform, parse_origin, rot_z_transform
 
-# Ordered joint chain from base to end-effector (excluding gripper jaw).
 ARM_JOINT_CHAIN = [
     "shoulder_pan",
     "shoulder_lift",
@@ -13,7 +12,6 @@ ARM_JOINT_CHAIN = [
     "wrist_roll",
 ]
 
-# Links we want to filter (arm body, not gripper).
 ARM_LINKS_TO_FILTER = {
     "base_link",
     "shoulder_link",
@@ -22,7 +20,6 @@ ARM_LINKS_TO_FILTER = {
     "wrist_link",
 }
 
-# Gripper links are NOT filtered.
 GRIPPER_LINKS = {"gripper_link", "gripper_frame_link", "moving_jaw_so101_v1_link"}
 
 
@@ -36,7 +33,6 @@ class ArmFilter:
         self.cam_to_base = np.asarray(cam_to_base, dtype=np.float64).reshape(4, 4)
         self.base_to_cam = np.linalg.inv(self.cam_to_base)
 
-        # Parse URDF
         tree = ET.parse(urdf_path)
         root = tree.getroot()
         self.joints = {}
@@ -55,7 +51,6 @@ class ArmFilter:
                 "origin_tf": make_transform(xyz, rpy),
             }
 
-        # Default capsule radii
         self.capsule_radii = {
             "base_link": 0.05,
             "shoulder_link": 0.04,
@@ -74,15 +69,12 @@ class ArmFilter:
         )
 
         link_positions: Dict[str, np.ndarray] = {}
-        # base_link origin is at world origin
         link_positions["base_link"] = np.zeros(3, dtype=np.float64)
 
         T_current = np.eye(4, dtype=np.float64)
         for i, jname in enumerate(ARM_JOINT_CHAIN):
             jdata = self.joints[jname]
-            # Static transform from parent to joint frame
             T_static = jdata["origin_tf"]
-            # Revolute rotation about Z
             q = float(joint_angles[i])
             T_current = T_current @ T_static @ rot_z_transform(q)
             child_link = jdata["child"]
@@ -97,12 +89,10 @@ class ArmFilter:
         R = self.base_to_cam[:3, :3]
         t = self.base_to_cam[:3, 3]
 
-        # Transform all positions to camera frame
         link_pos_cam = {
             name: R @ pos + t for name, pos in link_pos_base.items()
         }
 
-        # Build capsules between consecutive links in the chain
         chain_links = ["base_link", "shoulder_link", "upper_arm_link",
                        "lower_arm_link", "wrist_link", "gripper_link"]
         capsules = []
@@ -135,14 +125,11 @@ class ArmFilter:
         pts = coords.astype(np.float64)
 
         for p0, p1, radius in capsules:
-            # Point-to-segment distance
             seg = p1 - p0
             seg_len_sq = np.dot(seg, seg)
             if seg_len_sq < 1e-12:
-                # Degenerate segment – use sphere
                 dists_sq = np.sum((pts - p0) ** 2, axis=1)
             else:
-                # Project each point onto the segment
                 t_param = np.dot(pts - p0, seg) / seg_len_sq
                 t_param = np.clip(t_param, 0.0, 1.0)
                 closest = p0 + t_param[:, None] * seg

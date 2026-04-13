@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""LeRobot control client for two-machine deployment.
-
-Captures RGB-D + joint state from local hardware, sends observations to a
-remote inference server via ZMQ, receives actions, and executes them on the
-robot.
-
-Usage:
-    python arm_control.py --config configs/inference.yaml \
-                          --host 192.168.1.100
-"""
+"""Control client for YOLH two-machine deployment."""
 
 import argparse
 import threading
@@ -48,7 +39,7 @@ def _action_loop(robot, act_receiver: ZmqReceiver, stop_event: threading.Event):
             action = data.get("action")
             if action is None:
                 continue
-
+            print(f"Received action: {action}")
             robot.send_action(action[:3], action[3:9], float(action[9]))
     except Exception as exc:
         if not stop_event.is_set():

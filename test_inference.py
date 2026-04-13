@@ -1,50 +1,23 @@
 #!/usr/bin/env python3
-"""Inference server for YOLH two-machine deployment."""
+"""Debug inference server that replays FK poses instead of policy output."""
 
 import argparse
+import os
 import threading
 import time
 from typing import Optional
 
 import numpy as np
 import torch
-import MinkowskiEngine as ME
 
-from policy.yolh import YOLH
 from policy.utils.arm_filter import ArmFilter
 from policy.utils.ensemble import EnsembleBuffer
 from policy.utils.inference_state import InferenceState
-from policy.utils.transformation import project_action_to_base, unnormalize_action
+from policy.utils.transformation import matrix_to_rot6d
 from policy.utils.config import load_config, load_action_norm_stats
 from policy.utils.observation import build_observation_cloud
+from interface.ik_solver import SO101IKSolver
 from interface.zmq_interface import ZmqSender, ZmqReceiver, OBS_PORT, ACT_PORT
-
-
-def _cloud_to_sparse(cloud: np.ndarray, voxel_size: float, device: torch.device):
-    coords = np.ascontiguousarray(cloud[:, :3] / voxel_size, dtype=np.int32)
-    feats = cloud.astype(np.float32)
-    coords_batch, feats_batch = ME.utils.sparse_collate([coords], [feats])
-    return ME.SparseTensor(feats_batch.to(device), coords_batch.to(device))
-
-
-def load_policy(ckpt_path: str, cfg: dict, device: torch.device) -> YOLH:
-    mcfg = cfg["model"]
-    policy = YOLH(
-        num_action=cfg["num_action"],
-        input_dim=6,
-        obs_feature_dim=mcfg["obs_feature_dim"],
-        action_dim=10,
-        hidden_dim=mcfg["hidden_dim"],
-        nheads=mcfg["nheads"],
-        num_encoder_layers=mcfg["num_encoder_layers"],
-        num_decoder_layers=mcfg["num_decoder_layers"],
-        dropout=mcfg["dropout"],
-    )
-    state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    policy.load_state_dict(state, strict=False)
-    policy.to(device)
-    policy.eval()
-    return policy
 
 
 def build_arm_filter(cfg: dict, urdf_override: str = None) -> Optional[ArmFilter]:
@@ -89,6 +62,14 @@ def _run_inference_loop(
     if arm_filter is None:
         cfg.setdefault("arm_filter", {})["enabled"] = False
 
+    fk_solver = None
+    fk_solver = SO101IKSolver(str(urdf_path))
+    num_action = int(cfg.get("num_action", 1))
+
+    cloud_dir = os.path.expanduser("~/yolh_data/cloud")
+    os.makedirs(cloud_dir, exist_ok=True)
+    cloud_counter = 0
+
     while state.is_running():
         obs = obs_receiver.recv(timeout_ms=50)
         if obs is not None:
@@ -114,18 +95,31 @@ def _run_inference_loop(
         cloud = build_observation_cloud(
             rgb, depth, intrinsic, arm_filter, joint_angles, cfg,
         )
+
         next_run_time = now + interval
 
         if len(cloud) == 0:
             print(f"[t={timestamp}] Empty cloud, skip inference")
             continue
 
-        with torch.inference_mode():
-            cloud_sparse = _cloud_to_sparse(cloud, cfg["voxel_size"], device)
-            action_chunk = policy(cloud_sparse, actions=None, batch_size=1)
-            action_cam = unnormalize_action(action_chunk.squeeze(0).cpu().numpy(), cfg)
+        cloud_file = os.path.join(cloud_dir, f"cloud_{cloud_counter:06d}.npz")
+        np.savez_compressed(cloud_file, cloud=cloud)
+        cloud_counter += 1
 
-        action_base = project_action_to_base(action_cam, cam_to_base)
+        if fk_solver is None:
+            continue
+
+        q = np.asarray(joint_angles[:5], dtype=np.float64)
+        tcp_pose = fk_solver.fk(q)
+        tcp_pos = tcp_pose[:3, 3].astype(np.float32)
+        tcp_rot6d = matrix_to_rot6d(tcp_pose[:3, :3]).astype(np.float32)
+
+        single_action = np.zeros(10, dtype=np.float32)
+        single_action[:3] = tcp_pos
+        single_action[3:9] = tcp_rot6d
+        single_action[9] = 10.0
+        action_base = np.repeat(single_action[None, :], num_action, axis=0)
+
         if do_clamp:
             action_base[..., :3] = np.clip(action_base[..., :3], safe_min, safe_max)
 
@@ -253,9 +247,10 @@ def main():
     print(f"Action stats loaded: max_gripper_width={float(cfg['max_gripper_width']):.4f}m")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    policy = load_policy(args.ckpt, cfg, device)
+    policy = None
     print(f"Policy loaded from {args.ckpt} on {device}")
-
+    global urdf_path
+    urdf_path = args.urdf
     arm_filter = build_arm_filter(cfg, urdf_override=args.urdf)
 
     try:

@@ -138,7 +138,7 @@ def _project_3d_to_2d(kpts_3d, img_w, img_h, scaled_focal_length, camera_center,
     return np.rint(kpts_2d[0].cpu().numpy()).astype(np.int32)
 
 def _get_visible_points(mesh, origin):
-    """Return vertices of *mesh* visible from *origin* via ray casting."""
+    """Return mesh vertices visible from the camera origin."""
     intersector = trimesh.ray.ray_triangle.RayMeshIntersector(mesh)
     pts = mesh.vertices
     vectors = pts - origin
@@ -184,15 +184,12 @@ def _depth_align_frame(hamer_out, depth_img, mask, intrinsics, faces):
     verts = hamer_out["verts"]
     kpts_3d = hamer_out["kpts_3d"]
 
-    # 1. Create hand mesh
     mesh = trimesh.Trimesh(verts.copy(), faces.copy(), process=False)
 
-    # 2. Visible vertices via ray-cast
     vis_verts, _ = _get_visible_points(mesh, origin=np.array([0.0, 0.0, 0.0]))
     if len(vis_verts) < 10:
         return kpts_3d
 
-    # 3. Project visible verts → 2D → sample depth → 3D
     vis_2d = _project_3d_to_2d(
         (vis_verts - hamer_out["T_cam_pred"].cpu().numpy()).astype(np.float32),
         hamer_out["img_w"],
@@ -215,18 +212,15 @@ def _depth_align_frame(hamer_out, depth_img, mask, intrinsics, faces):
 
     depth_3d = _pixels_to_3d(vis_2d, depth_img, intrinsics)
 
-    # 4. Hand + arm point cloud from mask
     mask_pcd = _mask_to_pointcloud(mask, depth_img, intrinsics)
     if mask_pcd is None or len(mask_pcd.points) < 10:
         return kpts_3d
 
-    # 5. Initial transform (median translation)
     T_init = np.eye(4)
     translation = np.nanmedian(depth_3d - vis_verts, axis=0)
     if not np.isnan(translation).any():
         T_init[:3, 3] = translation
 
-    # 6. ICP refinement
     hamer_pcd = o3d.geometry.PointCloud()
     hamer_pcd.points = o3d.utility.Vector3dVector(vis_verts)
     try:
@@ -241,7 +235,6 @@ def _depth_align_frame(hamer_out, depth_img, mask, intrinsics, faces):
     except Exception:
         T = T_init
 
-    # 7. Apply to keypoints
     kpts_h = np.hstack([kpts_3d, np.ones((21, 1))])
     kpts_aligned = (T @ kpts_h.T).T[:, :3]
     return kpts_aligned.astype(np.float32)
@@ -276,13 +269,11 @@ def estimate_hand_states(
     N = len(rgb_frames)
     print(f"     Processing {N} frames for hand state estimation")
 
-    # Load HaMeR
     model, model_cfg = _load_hamer(hamer_checkpoint)
     faces_right = model.mano.faces
     faces_left = faces_right[:, [0, 2, 1]]
     faces = faces_left if hand_side == "left" else faces_right
 
-    # Output arrays
     kpts_3d_all = np.zeros((N, 21, 3), dtype=np.float32)
     kpts_2d_all = np.zeros((N, 21, 2), dtype=np.int32)
     hand_detected = np.zeros(N, dtype=bool)
@@ -297,7 +288,6 @@ def estimate_hand_states(
         if hamer_out is None:
             continue
 
-        # Depth alignment via ICP
         kpts_3d_aligned = _depth_align_frame(
             hamer_out, depth_frames[i], masks[i], intrinsics_dict, faces
         )

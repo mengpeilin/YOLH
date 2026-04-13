@@ -64,7 +64,7 @@ def rot_z_transform(angle: float, dtype=np.float64) -> np.ndarray:
 
 
 def rgbd_to_points(rgb, depth, intrinsic, mask=None):
-    """Convert RGB-D image to point cloud."""
+    """Back-project an RGB-D frame into a point cloud."""
     fx, fy, cx, cy = intrinsic
     H, W = depth.shape
     u, v = np.meshgrid(np.arange(W), np.arange(H))
@@ -116,9 +116,7 @@ def rotation_transform(
     from_convention = None, 
     to_convention = None
 ):
-    """
-    Transform a rotation representation into another equivalent rotation representation.
-    """
+    """Convert one rotation representation to another."""
     assert from_rep in VALID_ROTATION_REPRESENTATIONS, "Invalid rotation representation: {}".format(from_rep)
     assert to_rep in VALID_ROTATION_REPRESENTATIONS, "Invalid rotation representation: {}".format(to_rep)
     if from_rep == 'euler_angles':

@@ -1,17 +1,4 @@
-"""
-PyTorch Dataset for YOLH training from a pre-generated dataset file.
-
-Reads a single .npz file produced by 06_generate_dataset.py containing:
-  - clouds:             object array of (Ni, 6) float32
-  - actions:            (N, num_action, 10) float32
-  - actions_normalized: (N, num_action, 10) float32
-
-Output per sample (YOLH-compatible):
-  - input_coords_list:  list of (Ni, 3) int32   ME sparse voxel coords
-  - input_feats_list:   list of (Ni, 6) float32  [xyz, rgb_norm]
-  - action:             (num_action, 10) float32
-  - action_normalized:  (num_action, 10) float32
-"""
+"""Dataset loader for train_dataset.npz."""
 
 import numpy as np
 import torch
@@ -28,15 +15,13 @@ TO_TENSOR_KEYS = [
 
 
 class YolhDataset(Dataset):
-    """
-    YOLH-compatible dataset that reads from a single merged .npz file.
-    """
+    """Dataset wrapper around the merged YOLH archive."""
 
     def __init__(self, dataset_path: str, voxel_size: float = 0.005):
         data = np.load(dataset_path, allow_pickle=True)
-        self.clouds = data["clouds"]                          # object array of (Ni, 6)
-        self.actions = data["actions"]                        # (N, num_action, 10)
-        self.actions_normalized = data["actions_normalized"]  # (N, num_action, 10)
+        self.clouds = data["clouds"]
+        self.actions = data["actions"]
+        self.actions_normalized = data["actions_normalized"]
         self.voxel_size = voxel_size
 
         print(f"Loaded {len(self.clouds)} samples from {dataset_path}")
@@ -48,9 +33,8 @@ class YolhDataset(Dataset):
         return len(self.clouds)
 
     def __getitem__(self, index):
-        cloud = self.clouds[index]  # (N, 6) float32
+        cloud = self.clouds[index]
 
-        # ME sparse coords
         if len(cloud) > 0:
             voxel_coords = np.ascontiguousarray(
                 cloud[:, :3] / self.voxel_size, dtype=np.int32
@@ -67,6 +51,7 @@ class YolhDataset(Dataset):
             "action": actions,
             "action_normalized": actions_norm,
         }
+
 
 def collate_fn(batch):
     """Collate function that builds ME sparse batches."""

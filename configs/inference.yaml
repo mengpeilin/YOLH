@@ -1,29 +1,49 @@
-# Camera calibration and deployment configuration
-# Used by inference.py
+# Inference and deployment settings
 camera_intrinsic: [603.0418701171875, 603.035400390625, 330.1463623046875, 243.86166381835938]
 camera_serial: "147122075271"
 
 cam_to_base:
-  - [-0.4802232769739588, -0.34170456001833455,  0.8078512226363649,  0.302036088870308]
-  - [-0.20183312039308804, -0.8532388525045358, -0.4808813284887785,  0.11299002053003587]
-  - [ 0.8536093929689287, -0.39398154048054074,  0.34077786019018036,  0.2360758783325807]
+  - [
+      0.8774199323967146,
+      0.0787691360021732,
+      0.4732120935124309,
+      0.51239450028674
+    ]
+  - [
+      -0.477511952448643,
+      0.23800629994665679,
+      0.8457749916227054,
+      -0.07034535590184161
+    ]
+  - [
+      -0.046006494124539825,
+      -0.9680642666678562,
+      0.24644467553427796,
+      0.4749796472511745
+    ]
   - [ 0.0, 0.0, 0.0, 1.0]
 
-# ─── Workspace bounds (camera frame, metres) ───
+# Camera-frame workspace bounds.
 workspace_min: [-0.5, -0.1, 0.0]
 workspace_max: [ 0.5,  0.5, 1.0]
 
-# ─── Safety bounds (base frame, metres) ───
+# Optional base-frame safety bounds.
 # safe_workspace_min: [0.05, -0.25, 0.0]
 # safe_workspace_max: [0.40,  0.25, 0.35]
 # safe_eps: 0.002
 
-# ─── Point cloud processing ───
-voxel_size: 0.005           # metres per sparse voxel
+# Joint limit per control step. A per-joint map also works here.
+joint_delta_limit: 0.12
+# joint_delta_limit:
+#   shoulder_pan: 0.10
+#   shoulder_lift: 0.08
+#   elbow_flex: 0.08
+#   wrist_flex: 0.10
+#   wrist_roll: 0.15
 
-# ─── Arm self-filter ───
-# Bounding capsule radius per link (metres). Links not listed are skipped.
-# The gripper links are NOT filtered (gripper is re-inserted synthetically).
+voxel_size: 0.005
+
+# Capsule radius per link in metres.
 arm_filter:
   enabled: true
   capsule_radius:
@@ -33,14 +53,14 @@ arm_filter:
     lower_arm_link: 0.03
     wrist_link: 0.03
 
-# ─── Inference ───
-num_action: 20              # action horizon
-ensemble_mode: "act"        # temporal ensemble: new / old / avg / act / hato
+# Runtime settings.
+num_action: 20
+ensemble_mode: "act"
 discretize_rotation: true
-rot_step_size: 0.196        # π/16 radians
-gripper_threshold: 0.02     # metres – avoid sending gripper commands too often
+rot_step_size: 0.196
+gripper_threshold: 0.02
 
-# ─── Model architecture (must match training) ───
+# Must match the training checkpoint.
 model:
   obs_feature_dim: 512
   hidden_dim: 512

@@ -39,7 +39,6 @@ def detect_hand_bboxes(
         if (i + 1) % 25 == 0:
             print(f"     [{i + 1}/{N}] detected={hand_detected[:i+1].sum()}")
 
-    # Post-processing
     bboxes, hand_detected = _postprocess_bboxes(
         bboxes, hand_detected, max_jump=max_jump, max_gap=max_gap
     )
@@ -57,10 +56,9 @@ def detect_hand_bboxes(
 
 
 def _postprocess_bboxes(bboxes, hand_detected, max_jump=200.0, max_gap=10):
-    """Filter large jumps in bbox centres and linearly interpolate short gaps."""
+    """Reject unstable detections and fill short gaps."""
     N = len(bboxes)
 
-    # --- 1. Filter large centre jumps ----------------------------------------
     centres = np.zeros((N, 2), dtype=np.float32)
     centres[:, 0] = (bboxes[:, 0] + bboxes[:, 2]) / 2.0
     centres[:, 1] = (bboxes[:, 1] + bboxes[:, 3]) / 2.0
@@ -71,9 +69,7 @@ def _postprocess_bboxes(bboxes, hand_detected, max_jump=200.0, max_gap=10):
             if dist > max_jump:
                 hand_detected[i] = False
                 bboxes[i] = 0
-                scores_here = 0  # noqa: F841 (not stored back – already zero)
 
-    # --- 2. Interpolate short gaps -------------------------------------------
     i = 0
     while i < N:
         if not hand_detected[i]:

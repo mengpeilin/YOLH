@@ -1,13 +1,4 @@
-"""ZMQ communication for two-machine robot deployment.
-
-Architecture:
-    Control (camera + robot)
-        ├─ ZmqSender(obs_port)   ──PUSH──▶  Inference ZmqReceiver(obs_port)
-        └─ ZmqReceiver(act_port) ◀──PULL──  Inference ZmqSender(act_port)
-
-Serialization avoids raw numpy pickles so Python and numpy versions can differ
-between the control and inference machines.
-"""
+"""ZMQ transport helpers for YOLH control and inference."""
 
 import pickle
 from typing import Any, Optional
@@ -83,7 +74,7 @@ def _deserialize_message(payload: bytes) -> dict:
 
 
 class ZmqSender:
-    """ZMQ PUSH socket. Binds locally when *host* is None, connects to remote otherwise."""
+    """PUSH socket wrapper."""
 
     def __init__(self, port: int, host: str = None):
         self._ctx = zmq.Context()
@@ -103,7 +94,7 @@ class ZmqSender:
 
 
 class ZmqReceiver:
-    """ZMQ PULL socket. Binds locally when *host* is None, connects to remote otherwise."""
+    """PULL socket wrapper."""
 
     def __init__(self, port: int, host: str = None):
         self._ctx = zmq.Context()
@@ -115,7 +106,7 @@ class ZmqReceiver:
             self._sock.bind(f"tcp://*:{port}")
 
     def recv(self, timeout_ms: int = -1) -> Optional[dict]:
-        """Blocking recv. Returns None on timeout when *timeout_ms* >= 0."""
+        """Receive one message, or None on timeout."""
         if timeout_ms >= 0:
             if self._sock.poll(timeout_ms):
                 return _deserialize_message(self._sock.recv())
@@ -123,7 +114,7 @@ class ZmqReceiver:
         return _deserialize_message(self._sock.recv())
 
     def recv_latest(self) -> Optional[dict]:
-        """Drain queue and return only the most recent message."""
+        """Drain the queue and return the newest message."""
         latest = None
         while self._sock.poll(0):
             latest = _deserialize_message(self._sock.recv())

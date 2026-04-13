@@ -11,8 +11,6 @@ def load_config(path: str) -> dict:
     cfg["cam_to_base"] = np.array(cfg["cam_to_base"], dtype=np.float64).reshape(4, 4)
     cfg["workspace_min"] = np.array(cfg["workspace_min"], dtype=np.float32)
     cfg["workspace_max"] = np.array(cfg["workspace_max"], dtype=np.float32)
-    # cfg["safe_workspace_min"] = np.array(cfg["safe_workspace_min"], dtype=np.float32)
-    # cfg["safe_workspace_max"] = np.array(cfg["safe_workspace_max"], dtype=np.float32)
     cfg["gripper_offset"] = cfg.get("gripper_offset", [0.05, 0.0, 0.0])
     cfg["camera_intrinsic"] = np.array(cfg["camera_intrinsic"], dtype=np.float32)
     return cfg

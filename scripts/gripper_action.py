@@ -3,7 +3,7 @@ from scipy.spatial.transform import Rotation, Slerp
 from sklearn.gaussian_process import GaussianProcessRegressor  # type: ignore
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel  # type: ignore
 
-# MediaPipe / MANO landmark indices
+# MANO landmark indices.
 THUMB_TIP = 4
 INDEX_TIP = 8
 MIDDLE_TIP = 12
@@ -42,7 +42,7 @@ def _compute_frame_action(kpts_3d):
 
 
 def gaussian_process_smoothing(pts):
-    """GP regression with RBF + WhiteKernel on each dimension independently."""
+    """Smooth a sequence with an independent GP per dimension."""
     if len(pts) == 0:
         return pts
     time = np.arange(len(pts))[:, None]
@@ -62,7 +62,7 @@ def _gaussian_kernel(size, sigma):
 
 
 def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
-    """Gaussian-weighted local SLERP smoothing for rotation matrices."""
+    """Smooth a rotation sequence with local SLERP averaging."""
     N = len(rot_mats)
     if N <= 1:
         return rot_mats
@@ -70,7 +70,6 @@ def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
     half_k = kernel_size // 2
     quats = Rotation.from_matrix(rot_mats).as_quat()
 
-    # hemisphere correction
     quats_fixed = [quats[0]]
     for i in range(1, N):
         q = quats[i]
@@ -99,7 +98,6 @@ def gaussian_slerp_smoothing(rot_mats, sigma=10.0, kernel_size=41):
 def compute_gripper_actions(
     hand_state_path: str,
     output_path: str,
-    # min_open_ratio: float = 0.1,
 ):
     data = np.load(hand_state_path, allow_pickle=True)
     kpts_3d = data["kpts_3d"]
@@ -112,7 +110,6 @@ def compute_gripper_actions(
     ee_oris = np.zeros((N, 3, 3), dtype=np.float32)
     ee_widths = np.zeros(N, dtype=np.float32)
 
-    # per-frame raw actions
     for i in range(N):
         if not hand_detected[i]:
             continue
@@ -121,7 +118,6 @@ def compute_gripper_actions(
         ee_oris[i] = ori
         ee_widths[i] = width
 
-    # fill undetected frames by carry-forward
     det_idx = np.where(hand_detected)[0]
     if len(det_idx) == 0:
         print("     WARNING: no hand detected in any frame!")
@@ -143,17 +139,10 @@ def compute_gripper_actions(
         else:
             ee_pts[i], ee_oris[i], ee_widths[i] = last_pt, last_ori, last_w
 
-    # GP smooth positions and widths
     ee_pts_s = gaussian_process_smoothing(ee_pts).astype(np.float32)
     ee_widths_s = gaussian_process_smoothing(ee_widths).astype(np.float32).ravel()
 
-    # SLERP smooth orientations
     ee_oris_s = gaussian_slerp_smoothing(ee_oris, sigma=10.0, kernel_size=41).astype(np.float32)
-
-    # threshold small widths to zero (disabled for now)
-    # max_width = float(ee_widths_s.max()) if ee_widths_s.max() > 0 else 0.05
-    # min_threshold = max_width * min_open_ratio
-    # ee_widths_s[ee_widths_s < min_threshold] = 0.0
 
     np.savez_compressed(
         output_path,
