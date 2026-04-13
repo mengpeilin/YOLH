@@ -7,3 +7,9 @@
 [submodule "URDF/SO-ARM100"]
 	path = URDF/SO-ARM100
 	url = https://github.com/TheRobotStudio/SO-ARM100.git
+[submodule "dependencies/MinkowskiEngine"]
+	path = dependencies/MinkowskiEngine
+	url = git@github.com:chenxi-wang/MinkowskiEngine.git
+[submodule "dependencies/pytorch3d"]
+	path = dependencies/pytorch3d
+	url = git@github.com:facebookresearch/pytorch3d.git
