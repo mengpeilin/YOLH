@@ -7,9 +7,17 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SO101_URDF_PATH = os.path.join(
     PROJECT_ROOT, "URDF", "SO-ARM100", "Simulation", "SO101", "so101_new_calib.urdf"
 )
+ROBOTIQ_2F85_URDF_PATH = os.path.join(
+    PROJECT_ROOT,
+    "URDF",
+    "robotiq_arg85_description",
+    "robots",
+    "robotiq_arg85_description.URDF",
+)
 
 _GRIPPER_MODEL_CACHE = {}
 _URDF_DATA_CACHE = {}
+_ROBOTIQ_DATA_CACHE = {}
 
 def _rpy_to_rot(rpy):
     roll, pitch, yaw = rpy
@@ -142,6 +150,21 @@ def _sample_points_from_triangles(triangles, num_points, rng):
 
 
 def _resolve_mesh_path(urdf_dir, mesh_file):
+    if mesh_file.startswith("package://"):
+        rel = mesh_file[len("package://"):]
+        package_name, _, subpath = rel.partition("/")
+        package_root = os.path.dirname(urdf_dir)
+
+        package_candidates = []
+        if package_name and os.path.basename(package_root) == package_name:
+            package_candidates.append(os.path.join(package_root, subpath))
+        if package_name:
+            package_candidates.append(os.path.join(PROJECT_ROOT, "URDF", package_name, subpath))
+
+        for cand in package_candidates:
+            if os.path.isfile(cand):
+                return cand
+
     cand = os.path.join(urdf_dir, mesh_file)
     if os.path.isfile(cand):
         return cand
@@ -194,6 +217,288 @@ def _sample_link_points(link_elem, urdf_dir, n_samples, rng):
         pts = _sample_points_from_triangles(tri, cnt, rng)
         pts_all.append(_transform_points(pts.astype(np.float64), tf_list[i]))
     return np.concatenate(pts_all, axis=0) if pts_all else np.zeros((0, 3), dtype=np.float64)
+
+
+def _normalize_gripper_type(gripper_type):
+    gt = str(gripper_type or "so101").strip().lower()
+    aliases = {
+        "so-arm100": "so101",
+        "so_arm100": "so101",
+        "robotiq": "robotiq_2f85",
+        "robotiq2f85": "robotiq_2f85",
+        "robotiq_2f_85": "robotiq_2f85",
+        "2f85": "robotiq_2f85",
+    }
+    return aliases.get(gt, gt)
+
+
+def _resolve_urdf_path(urdf_path, default_path):
+    if urdf_path is None:
+        path = default_path
+    elif os.path.isabs(urdf_path):
+        path = urdf_path
+    else:
+        path = os.path.join(PROJECT_ROOT, urdf_path)
+    return os.path.abspath(path)
+
+
+def _parse_joint_info(joint_elem):
+    xyz, rpy = _parse_origin(joint_elem)
+    axis_elem = joint_elem.find("axis")
+    axis = (
+        np.fromstring(axis_elem.get("xyz", "0 0 1"), sep=" ", dtype=np.float64)
+        if axis_elem is not None
+        else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    )
+    if axis.size != 3:
+        axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    limit_elem = joint_elem.find("limit")
+    lower = float(limit_elem.get("lower", "0")) if limit_elem is not None else 0.0
+    upper = float(limit_elem.get("upper", "0")) if limit_elem is not None else 0.0
+
+    mimic_elem = joint_elem.find("mimic")
+    mimic = None
+    if mimic_elem is not None:
+        mimic = {
+            "joint": mimic_elem.get("joint"),
+            "multiplier": float(mimic_elem.get("multiplier", "1")),
+            "offset": float(mimic_elem.get("offset", "0")),
+        }
+
+    return {
+        "name": joint_elem.get("name"),
+        "type": joint_elem.get("type", "fixed"),
+        "parent": joint_elem.find("parent").get("link"),
+        "child": joint_elem.find("child").get("link"),
+        "origin": _make_transform(xyz, rpy),
+        "axis": axis,
+        "lower": lower,
+        "upper": upper,
+        "mimic": mimic,
+    }
+
+
+def _resolve_joint_angle(joint_info, master_angles):
+    if joint_info["type"] not in ("revolute", "continuous"):
+        return 0.0
+
+    if joint_info["name"] in master_angles:
+        return float(master_angles[joint_info["name"]])
+
+    mimic = joint_info.get("mimic")
+    if mimic is not None and mimic.get("joint") in master_angles:
+        return float(
+            mimic["multiplier"] * master_angles[mimic["joint"]] + mimic["offset"]
+        )
+
+    return 0.0
+
+
+def _compute_link_transforms(base_link, child_joints, master_angles):
+    transforms = {base_link: np.eye(4, dtype=np.float64)}
+
+    def dfs(parent_link):
+        parent_t = transforms[parent_link]
+        for joint_info in child_joints.get(parent_link, []):
+            child_t = parent_t @ joint_info["origin"]
+            if joint_info["type"] in ("revolute", "continuous"):
+                angle = _resolve_joint_angle(joint_info, master_angles)
+                rot = np.eye(4, dtype=np.float64)
+                rot[:3, :3] = _axis_angle_rot(joint_info["axis"], angle)
+                child_t = child_t @ rot
+            transforms[joint_info["child"]] = child_t
+            dfs(joint_info["child"])
+
+    dfs(base_link)
+    return transforms
+
+
+def _pick_inner_contact_point(pts, z_tip, contact_offset_z, z_band):
+    z_target = z_tip - contact_offset_z
+    zmask = np.abs(pts[:, 2] - z_target) < z_band
+    if zmask.sum() < 5:
+        dists = np.abs(pts[:, 2] - z_target)
+        zmask = dists < np.percentile(dists, 10)
+    cands = pts[zmask]
+    cx = cands[:, 0]
+    if cands[:, 0].mean() >= 0:
+        inner = cands[cx <= np.percentile(cx, 30)]
+    else:
+        inner = cands[cx >= np.percentile(cx, 70)]
+    return inner.mean(axis=0) if len(inner) > 0 else cands.mean(axis=0)
+
+
+def _get_robotiq_data(urdf_path=None, tip_sample_points=20000, contact_offset_z=0.05, z_band=0.005):
+    global _ROBOTIQ_DATA_CACHE
+
+    resolved_urdf_path = _resolve_urdf_path(urdf_path, ROBOTIQ_2F85_URDF_PATH)
+    cache_key = (
+        resolved_urdf_path,
+        int(tip_sample_points),
+        float(contact_offset_z),
+        float(z_band),
+    )
+    if cache_key in _ROBOTIQ_DATA_CACHE:
+        return _ROBOTIQ_DATA_CACHE[cache_key]
+
+    if not os.path.isfile(resolved_urdf_path):
+        raise FileNotFoundError(f"Missing URDF: {resolved_urdf_path}")
+
+    urdf_dir = os.path.dirname(resolved_urdf_path)
+    root = ET.parse(resolved_urdf_path).getroot()
+    links = {lk.get("name"): lk for lk in root.findall("link") if lk.get("name")}
+    joint_list = [_parse_joint_info(jt) for jt in root.findall("joint") if jt.get("name")]
+    joints = {jt["name"]: jt for jt in joint_list}
+    child_joints = {}
+    for jt in joint_list:
+        child_joints.setdefault(jt["parent"], []).append(jt)
+
+    base_link = "robotiq_85_base_link"
+    master_joint = "finger_joint"
+    if base_link not in links or master_joint not in joints:
+        raise ValueError("Robotiq URDF is missing robotiq_85_base_link or finger_joint")
+
+    render_links = [
+        "robotiq_85_base_link",
+        "left_outer_knuckle",
+        "left_outer_finger",
+        "left_inner_knuckle",
+        "left_inner_finger",
+        "right_inner_knuckle",
+        "right_inner_finger",
+        "right_outer_knuckle",
+        "right_outer_finger",
+    ]
+
+    rng = np.random.default_rng(seed=4242)
+    render_points_local = {}
+    for link_name in render_links:
+        if link_name in links:
+            render_points_local[link_name] = _sample_link_points(
+                links[link_name], urdf_dir, 900, rng
+            ).astype(np.float64)
+
+    contact_rng = np.random.default_rng(seed=4343)
+    left_contact_local = _sample_link_points(
+        links["left_outer_finger"], urdf_dir, int(tip_sample_points), contact_rng
+    ).astype(np.float64)
+    right_contact_local = _sample_link_points(
+        links["right_outer_finger"], urdf_dir, int(tip_sample_points), contact_rng
+    ).astype(np.float64)
+
+    jaw_lower = joints[master_joint]["lower"]
+    jaw_upper = joints[master_joint]["upper"]
+
+    data = {
+        "urdf_path": resolved_urdf_path,
+        "urdf_dir": urdf_dir,
+        "links": links,
+        "joints": joints,
+        "child_joints": child_joints,
+        "base_link": base_link,
+        "master_joint": master_joint,
+        "jaw_lower": jaw_lower,
+        "jaw_upper": jaw_upper,
+        "render_points_local": render_points_local,
+        "left_contact_local": left_contact_local,
+        "right_contact_local": right_contact_local,
+        "contact_offset_z": float(contact_offset_z),
+        "z_band": float(z_band),
+    }
+    _ROBOTIQ_DATA_CACHE[cache_key] = data
+    return data
+
+
+def get_gripper_data(gripper_type="so101", urdf_path=None, tip_sample_points=20000, contact_offset_z=0.05, z_band=0.005):
+    gt = _normalize_gripper_type(gripper_type)
+    if gt == "so101":
+        return _get_urdf_data(
+            tip_sample_points=tip_sample_points,
+            contact_offset_z=contact_offset_z,
+            z_band=z_band,
+        )
+    if gt == "robotiq_2f85":
+        return _get_robotiq_data(
+            urdf_path=urdf_path,
+            tip_sample_points=tip_sample_points,
+            contact_offset_z=contact_offset_z,
+            z_band=z_band,
+        )
+    raise ValueError(f"Unsupported gripper_type: {gripper_type}")
+
+
+def _load_robotiq_gripper_points_in_base(jaw_angle, num_points, urdf_path=None, tip_sample_points=20000, contact_offset_z=0.05, z_band=0.005):
+    resolved_urdf_path = _resolve_urdf_path(urdf_path, ROBOTIQ_2F85_URDF_PATH)
+    angle_q = round(float(jaw_angle), 3)
+    cache_key = ("robotiq_2f85", resolved_urdf_path, angle_q, int(num_points))
+    if cache_key in _GRIPPER_MODEL_CACHE:
+        return _GRIPPER_MODEL_CACHE[cache_key]
+
+    data = _get_robotiq_data(
+        urdf_path=resolved_urdf_path,
+        tip_sample_points=tip_sample_points,
+        contact_offset_z=contact_offset_z,
+        z_band=z_band,
+    )
+    transforms = _compute_link_transforms(
+        data["base_link"],
+        data["child_joints"],
+        {data["master_joint"]: float(jaw_angle)},
+    )
+
+    all_pts = []
+    for link_name, pts_local in data["render_points_local"].items():
+        if pts_local.size == 0:
+            continue
+        link_t = transforms.get(link_name, np.eye(4, dtype=np.float64))
+        all_pts.append(_transform_points(pts_local, link_t))
+
+    if not all_pts:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    pts = np.concatenate(all_pts, axis=0).astype(np.float32)
+    rng = np.random.default_rng(int(abs(angle_q * 1000)) % (2 ** 31))
+    if len(pts) > num_points:
+        idx = rng.choice(len(pts), size=int(num_points), replace=False)
+        pts = pts[idx]
+    elif len(pts) < num_points and len(pts) > 0:
+        idx = rng.choice(len(pts), size=int(num_points - len(pts)), replace=True)
+        pts = np.concatenate([pts, pts[idx]], axis=0)
+
+    _GRIPPER_MODEL_CACHE[cache_key] = pts
+    return pts
+
+
+def _compute_robotiq_tcp_in_base(jaw_angle, urdf_path=None, tip_sample_points=20000, contact_offset_z=0.05, z_band=0.005):
+    data = _get_robotiq_data(
+        urdf_path=urdf_path,
+        tip_sample_points=tip_sample_points,
+        contact_offset_z=contact_offset_z,
+        z_band=z_band,
+    )
+    transforms = _compute_link_transforms(
+        data["base_link"],
+        data["child_joints"],
+        {data["master_joint"]: float(jaw_angle)},
+    )
+
+    left_pts = _transform_points(data["left_contact_local"], transforms["left_outer_finger"])
+    right_pts = _transform_points(data["right_contact_local"], transforms["right_outer_finger"])
+
+    left_contact = _pick_inner_contact_point(
+        left_pts,
+        float(left_pts[:, 2].max()),
+        data["contact_offset_z"],
+        data["z_band"],
+    )
+    right_contact = _pick_inner_contact_point(
+        right_pts,
+        float(right_pts[:, 2].max()),
+        data["contact_offset_z"],
+        data["z_band"],
+    )
+    return ((left_contact + right_contact) / 2.0).astype(np.float64)
 
 
 def _get_urdf_data(tip_sample_points=20000, contact_offset_z=0.05, z_band=0.005):
@@ -377,21 +682,50 @@ def create_gripper_points(
     jaw_angle,
     num_points=1200,
     gripper_offset=None,
+    gripper_type="so101",
+    urdf_path=None,
+    tcp_local=None,
     tip_sample_points=20000,
     contact_offset_z=0.05,
     z_band=0.005,
 ):
-    """Create SO-ARM100 gripper point cloud at the given pose."""
-    gripper_local = _load_so101_gripper_points_in_frame(jaw_angle, int(num_points))
+    """Create gripper point cloud at the given pose."""
+    gt = _normalize_gripper_type(gripper_type)
+    if gt == "so101":
+        gripper_local = _load_so101_gripper_points_in_frame(jaw_angle, int(num_points))
+        default_tcp_local = _compute_tcp_in_frame(
+            jaw_angle,
+            tip_sample_points=tip_sample_points,
+            contact_offset_z=contact_offset_z,
+            z_band=z_band,
+        )
+    elif gt == "robotiq_2f85":
+        gripper_local = _load_robotiq_gripper_points_in_base(
+            jaw_angle,
+            int(num_points),
+            urdf_path=urdf_path,
+            tip_sample_points=tip_sample_points,
+            contact_offset_z=contact_offset_z,
+            z_band=z_band,
+        )
+        default_tcp_local = _compute_robotiq_tcp_in_base(
+            jaw_angle,
+            urdf_path=urdf_path,
+            tip_sample_points=tip_sample_points,
+            contact_offset_z=contact_offset_z,
+            z_band=z_band,
+        )
+    else:
+        raise ValueError(f"Unsupported gripper_type: {gripper_type}")
 
-    tcp_local = _compute_tcp_in_frame(
-        jaw_angle,
-        tip_sample_points=tip_sample_points,
-        contact_offset_z=contact_offset_z,
-        z_band=z_band,
-    )
+    if tcp_local is None:
+        tcp_local_arr = default_tcp_local
+    else:
+        tcp_local_arr = np.asarray(tcp_local, dtype=np.float64)
+        if tcp_local_arr.shape != (3,):
+            raise ValueError(f"tcp_local must have shape (3,), got {tcp_local_arr.shape}")
 
-    p_gripper = position - orientation @ tcp_local
+    p_gripper = position - orientation @ tcp_local_arr
 
     if gripper_offset is not None:
         p_gripper = p_gripper + np.asarray(gripper_offset, dtype=np.float64)

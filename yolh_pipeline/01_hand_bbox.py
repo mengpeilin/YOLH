@@ -20,6 +20,7 @@ def main():
     threshold = float(step_cfg.get("threshold", 0.2))
     max_jump = float(step_cfg.get("max_jump", 200.0))
     max_gap = int(step_cfg.get("max_gap", 10))
+    first_frame_only = bool(step_cfg.get("first_frame_only", False))
 
     data_dir = Path(args.data_dir)
     sessions = sorted(
@@ -36,7 +37,7 @@ def main():
             print(f"[{i+1}/{len(sessions)}] {sess.name}: skip (exists)")
             continue
         print(f"\n[{i+1}/{len(sessions)}] {sess.name}")
-        detect_hand_bboxes(str(raw), str(out), dino_model, threshold, max_jump, max_gap)
+        detect_hand_bboxes(str(raw), str(out), dino_model, threshold, max_jump, max_gap, first_frame_only)
 
 
 if __name__ == "__main__":

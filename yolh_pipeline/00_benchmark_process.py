@@ -51,26 +51,27 @@ def main():
         raise FileNotFoundError("No episode_*.parquet files found in selected chunk(s)")
 
     print(f"Found {len(all_episode_files)} episode parquet file(s)")
-
+    index = 0
     for idx, parquet_path in enumerate(all_episode_files, start=1):
-        episode_index = int(parquet_path.stem.split("_")[-1])
-
+        episode_idx = int(parquet_path.stem.split("_")[-1])
+        
         videos_chunk_dir = input_dir / "videos" / parquet_path.parent.name
         if not videos_chunk_dir.exists():
             raise FileNotFoundError(f"Video chunk directory does not exist: {videos_chunk_dir}")
 
-        out_session = output_dir / f"rosbag_episode_{episode_index:06d}"
+        out_session = output_dir / f"rosbag_episode_{index:06d}"
         out_session.mkdir(parents=True, exist_ok=True)
         out_npz = out_session / "raw.npz"
 
         if out_npz.exists():
-            print(f"[{idx}/{len(all_episode_files)}] episode_{episode_index:06d}: skip (raw.npz exists)")
+            print(f"[{idx}/{len(all_episode_files)}] episode_{index:06d}: skip (raw.npz exists)")
+            index += 1
             continue
 
-        color_video = find_video_file(videos_chunk_dir, color_video_key, episode_index, color_ext)
-        depth_video = find_video_file(videos_chunk_dir, depth_video_key, episode_index, depth_ext)
+        color_video = find_video_file(videos_chunk_dir, color_video_key, episode_idx, color_ext)
+        depth_video = find_video_file(videos_chunk_dir, depth_video_key, episode_idx, depth_ext)
 
-        print(f"[{idx}/{len(all_episode_files)}] episode_{episode_index:06d}")
+        print(f"[{idx}/{len(all_episode_files)}] episode_{index:06d}")
         print(f"  color: {color_video}")
         print(f"  depth: {depth_video}")
 
@@ -90,7 +91,7 @@ def main():
             n_frames = min(n_frames, int(max_frames))
 
         if n_frames <= 0:
-            raise ValueError(f"No usable frames for episode_{episode_index:06d}")
+            raise ValueError(f"No usable frames for episode_{index:06d}")
 
         if len(rgb_arr) != len(depth_arr) or len(rgb_arr) != len(ts_arr):
             print(
@@ -106,7 +107,7 @@ def main():
             timestamps=ts_arr[:n_frames],
         )
         print(f"  saved: {out_npz} ({n_frames} frames)")
-
+        index += 1
 
 if __name__ == "__main__":
     main()

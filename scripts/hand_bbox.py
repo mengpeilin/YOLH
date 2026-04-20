@@ -9,39 +9,60 @@ def detect_hand_bboxes(
     threshold: float = 0.2,
     max_jump: float = 200.0,
     max_gap: int = 10,
+    first_frame_only: bool = False,
 ):
     data = np.load(npz_path, allow_pickle=True)
     rgb_frames = data["rgb"]
     N = len(rgb_frames)
-    print(f"     Processing {N} frames for hand bbox detection")
 
-    detector = hf_pipeline(
-        model=dino_model_id,
-        task="zero-shot-object-detection",
-        device="cuda",
-        batch_size=4,
-    )
-
-    bboxes = np.zeros((N, 4), dtype=np.float32)
-    scores = np.zeros(N, dtype=np.float32)
-    hand_detected = np.zeros(N, dtype=bool)
-
-    for i in range(N):
-        img_pil = Image.fromarray(rgb_frames[i])
+    if first_frame_only:
+        print(f"     first_frame_only mode: detecting hand in frame 0 only, propagating to all {N} frames")
+        detector = hf_pipeline(
+            model=dino_model_id,
+            task="zero-shot-object-detection",
+            device="cuda",
+            batch_size=1,
+        )
+        img_pil = Image.fromarray(rgb_frames[0])
         results = detector(img_pil, candidate_labels=["a hand."], threshold=threshold)
-        if results:
-            best = max(results, key=lambda r: r["score"])
-            box = best["box"]
-            bboxes[i] = [box["xmin"], box["ymin"], box["xmax"], box["ymax"]]
-            scores[i] = best["score"]
-            hand_detected[i] = True
+        if not results:
+            raise ValueError("Hand not detected in frame 0; cannot propagate bbox to all frames")
+        best = max(results, key=lambda r: r["score"])
+        box = best["box"]
+        bbox0 = np.array([box["xmin"], box["ymin"], box["xmax"], box["ymax"]], dtype=np.float32)
+        score0 = float(best["score"])
+        bboxes = np.tile(bbox0, (N, 1)).astype(np.float32)
+        scores = np.full(N, score0, dtype=np.float32)
+        hand_detected = np.ones(N, dtype=bool)
+        print(f"     Frame 0 bbox: {bbox0}  score: {score0:.3f}  propagated to {N} frames")
+    else:
+        print(f"     Processing {N} frames for hand bbox detection")
+        detector = hf_pipeline(
+            model=dino_model_id,
+            task="zero-shot-object-detection",
+            device="cuda",
+            batch_size=4,
+        )
+        bboxes = np.zeros((N, 4), dtype=np.float32)
+        scores = np.zeros(N, dtype=np.float32)
+        hand_detected = np.zeros(N, dtype=bool)
 
-        if (i + 1) % 25 == 0:
-            print(f"     [{i + 1}/{N}] detected={hand_detected[:i+1].sum()}")
+        for i in range(N):
+            img_pil = Image.fromarray(rgb_frames[i])
+            results = detector(img_pil, candidate_labels=["a hand."], threshold=threshold)
+            if results:
+                best = max(results, key=lambda r: r["score"])
+                box = best["box"]
+                bboxes[i] = [box["xmin"], box["ymin"], box["xmax"], box["ymax"]]
+                scores[i] = best["score"]
+                hand_detected[i] = True
 
-    bboxes, hand_detected = _postprocess_bboxes(
-        bboxes, hand_detected, max_jump=max_jump, max_gap=max_gap
-    )
+            if (i + 1) % 25 == 0:
+                print(f"     [{i + 1}/{N}] detected={hand_detected[:i+1].sum()}")
+
+        bboxes, hand_detected = _postprocess_bboxes(
+            bboxes, hand_detected, max_jump=max_jump, max_gap=max_gap
+        )
 
     np.savez_compressed(
         output_path,

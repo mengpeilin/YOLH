@@ -6,6 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.point_cloud import build_point_clouds
 from yolh_pipeline.config_utils import load_pipeline_config, get_step_cfg
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,6 +22,14 @@ def main():
     workspace_min = step_cfg.get("workspace_min", [-0.5, -0.1, 0.0])
     workspace_max = step_cfg.get("workspace_max", [0.5, 0.5, 1.0])
     gripper_offset = step_cfg.get("gripper_offset", [0.05, 0.0, 0.0])
+    gripper_type = step_cfg.get("gripper_type", "so101")
+    gripper_urdf_path = step_cfg.get("gripper_urdf_path")
+    if gripper_urdf_path is not None:
+        gripper_urdf_path = Path(gripper_urdf_path)
+        if not gripper_urdf_path.is_absolute():
+            gripper_urdf_path = (PROJECT_ROOT / gripper_urdf_path).resolve()
+        gripper_urdf_path = str(gripper_urdf_path)
+    gripper_tcp_local = step_cfg.get("gripper_tcp_local")
     gripper_num_points = int(step_cfg.get("gripper_num_points", 1200))
     tip_sample_points = int(step_cfg.get("tip_sample_points", 20000))
     contact_offset_z = float(step_cfg.get("contact_offset_z", 0.05))
@@ -54,6 +64,9 @@ def main():
             workspace_min=workspace_min,
             workspace_max=workspace_max,
             gripper_offset=gripper_offset,
+            gripper_type=gripper_type,
+            gripper_urdf_path=gripper_urdf_path,
+            gripper_tcp_local=gripper_tcp_local,
             gripper_num_points=gripper_num_points,
             tip_sample_points=tip_sample_points,
             contact_offset_z=contact_offset_z,

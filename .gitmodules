@@ -13,3 +13,6 @@
 [submodule "dependencies/pytorch3d"]
 	path = dependencies/pytorch3d
 	url = git@github.com:facebookresearch/pytorch3d.git
+[submodule "URDF/robotiq_arg85_description"]
+	path = URDF/robotiq_arg85_description
+	url = https://github.com/a-price/robotiq_arg85_description.git

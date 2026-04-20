@@ -3,8 +3,8 @@ from policy.utils.constants import IMG_MEAN, IMG_STD
 from policy.utils.transformation import rgbd_to_points
 from scripts.urdf_reader import (
     create_gripper_points,
+    get_gripper_data,
     width_to_jaw_angle,
-    _get_urdf_data,
 )
 
 def build_point_clouds(
@@ -15,7 +15,10 @@ def build_point_clouds(
     voxel_size: float = 0.005,
     workspace_min=(-0.5, -0.1, 0.0),
     workspace_max=(0.5, 0.5, 1.0),
-    gripper_offset=(0.05, 0, 0),
+    gripper_offset=(0.0, 0.0, 0.0),
+    gripper_type: str = "so101",
+    gripper_urdf_path: str = None,
+    gripper_tcp_local=None,
     gripper_num_points: int = 1200,
     tip_sample_points: int = 20000,
     contact_offset_z: float = 0.05,
@@ -44,14 +47,16 @@ def build_point_clouds(
         else float(ee_widths.max())
     )
 
-    # URDF jaw limits
-    urdf = _get_urdf_data(
+    # Gripper jaw limits
+    gripper = get_gripper_data(
+        gripper_type=gripper_type,
+        urdf_path=gripper_urdf_path,
         tip_sample_points=tip_sample_points,
         contact_offset_z=contact_offset_z,
         z_band=z_band,
     )
-    jaw_lower = urdf["jaw_lower"]
-    jaw_upper = urdf["jaw_upper"]
+    jaw_lower = gripper["jaw_lower"]
+    jaw_upper = gripper["jaw_upper"]
 
     num_frames = len(rgb_frames)
     print(f"     Building point clouds for {num_frames} frames "
@@ -86,6 +91,9 @@ def build_point_clouds(
                 ee_pt, ee_ori, jaw_angle,
                 num_points=gripper_num_points,
                 gripper_offset=list(gripper_offset) if gripper_offset is not None else None,
+                gripper_type=gripper_type,
+                urdf_path=gripper_urdf_path,
+                tcp_local=gripper_tcp_local,
                 tip_sample_points=tip_sample_points,
                 contact_offset_z=contact_offset_z,
                 z_band=z_band,
