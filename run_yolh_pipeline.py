@@ -26,9 +26,15 @@ def conda_run(env, script, *extra_args):
 
 def main():
     parser = argparse.ArgumentParser(description="YOLH Data Pipeline")
-    parser.add_argument("--input-dir", required=True, help="Directory containing ROS2 bag folders")
+    parser.add_argument("--input-dir", required=True, help="Input dataset directory")
     parser.add_argument("--output-dir", required=True, help="Root output directory for all pipeline data")
     parser.add_argument("--task-name", required=True, help="Task name (e.g. pick_cup)")
+    parser.add_argument(
+        "--input-format",
+        default="rosbag",
+        choices=["rosbag", "benchmark"],
+        help="Input format: rosbag (ROS2 bags) or benchmark (LeRobot-style human demos)",
+    )
     parser.add_argument("--config", default="configs/pipeline.yaml", help="Pipeline config file")
     parser.add_argument("--sam2-env", default="sam2", help="Conda env for SAM2")
     parser.add_argument("--phantom-env", default="phantom", help="Conda env for DINO / HaMeR / action")
@@ -45,17 +51,24 @@ def main():
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("############# 00  ros2bag_process ###########")
-    run([
-        sys.executable,
-        pipeline_dir / "00_ros2bag_process.py",
-        "--input-dir",
-        input_dir,
-        "--output-dir",
-        output_dir,
-        "--config",
-        config_path,
-    ])
+    # if args.input_format == "rosbag":
+    #     print("############# 00  ros2bag_process ###########")
+    #     step00_script = pipeline_dir / "00_ros2bag_process.py"
+    # else:
+    #     print("############# 00  benchmark_process ###########")
+    #     step00_script = pipeline_dir / "00_benchmark_process.py"
+
+    # run(
+    #     conda_run(
+    #         args.phantom_env, step00_script,
+    #         "--input-dir",
+    #         input_dir,
+    #         "--output-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #     )
+    # )
 
     print("############# 01  hand_bbox ###########")
     run(

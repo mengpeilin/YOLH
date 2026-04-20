@@ -4,6 +4,26 @@ step00:
   info_topic: /camera/camera/color/camera_info
   max_frames: null
 
+step00_human:
+  color_video_key: observation.images.cam_azure_kinect_left.color
+  depth_video_key: observation.images.cam_azure_kinect_left.transformed_depth
+  color_ext: .mp4
+  depth_ext: .mkv
+  chunk: "*"
+  max_frames: null
+  fps: 30
+  camera_info:
+    extrinsic:
+      - [0.03777011, 0.77585638, -0.62977797, 0.90361032]
+      - [0.99903069, -0.01505955, 0.04136291, -0.13823468]
+      - [0.02260750, -0.63072980, -0.77567314, 0.62485432]
+      - [0.0, 0.0, 0.0, 1.0]
+    intrinsic:
+      - [609.09680176, 0.0, 639.61486816]
+      - [0.0, 608.88891602, 365.63900757]
+      - [0.0, 0.0, 1.0]
+    distortion: [0.635826647, -2.91944551, 0.000952081464, -0.000327307062, 1.68455172, 0.512719929, -2.73880315, 1.60850489]
+
 step01:
   dino_model: IDEA-Research/grounding-dino-tiny
   threshold: 0.2
@@ -11,8 +31,8 @@ step01:
   max_gap: 10
 
 step02:
-  sam2_checkpoint: dependencies/sam2/checkpoints/sam2.1_hiera_large.pt
-  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+  sam2_checkpoint: dependencies/sam2/checkpoints/sam2.1_hiera_tiny.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
   device: auto
 
 step03:

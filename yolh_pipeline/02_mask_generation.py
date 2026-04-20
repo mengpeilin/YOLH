@@ -41,7 +41,7 @@ def main():
             print(f"[{i+1}/{len(sessions)}] {sess.name}: skip (arm bboxes exist)")
             continue
         arm_bbox = _select_user_bbox(str(raw))
-        np.savez_compressed(out, **{arm_bbox: arm_bbox})
+        np.savez_compressed(out, arm_hand_bbox=arm_bbox)
         print(f"[{i+1}/{len(sessions)}] {sess.name}: saved arm bbox to {out}")
 
     for i, sess in enumerate(sessions):
