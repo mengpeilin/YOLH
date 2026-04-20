@@ -1,12 +1,10 @@
-# YOLH
+# YOLH: You Only Learn from Humans
 
-YOLH is a robot imitation learning project built on RGB-D demonstrations. The repository focuses on three core workflows:
+YOLH is a robot imitation learning pipeline. The repository focuses on three core workflows:
 
-- Offline data pipeline: convert ROS2 bags into trainable point-cloud/action datasets.
-- Policy training: train the YOLH policy with sparse 3D encoding and temporal action decoding.
-- Online deployment: run two-machine observation, remote inference, action feedback, and SO-101 control.
-
-The repository also includes vendored third-party source trees. Day-to-day development is usually concentrated in the root scripts, scripts, yolh_pipeline, policy, interface, and dataset directories.
+- Data processing: convert ROS2 bags into trainable point-cloud/action datasets.
+- Policy training: train the policy with sparse 3D encoding and temporal action decoding.
+- Realworld deployment: test the trained policy in realworld with lerobot SO101.
 
 ## Repository Layout
 
@@ -14,7 +12,6 @@ The repository also includes vendored third-party source trees. Day-to-day devel
 YOLH/
 ├── arm_control.py              # Robot-side control client
 ├── inference.py                # Inference server
-├── test_inference.py           # FK replay debug server
 ├── train.py                    # Training entrypoint
 ├── run_yolh_pipeline.py        # One-command offline pipeline launcher
 ├── configs/                    # Inference, calibration, and pipeline configs
@@ -22,7 +19,7 @@ YOLH/
 ├── interface/                  # Robot interface, IK, and ZMQ transport
 ├── policy/                     # YOLH model and inference utilities
 ├── scripts/                    # Core logic for each processing stage
-├── yolh_pipeline/              # Batch wrappers for stages 00-06
+├── yolh_pipeline/              # Batch wrappers for data processing
 ├── URDF/                       # SO-ARM100 / SO-101 models and hardware assets
 ├── lerobot/                    # Vendored LeRobot code
 └── dependencies/               # Source trees for SAM2, HaMeR, MinkowskiEngine, PyTorch3D, etc.
@@ -72,18 +69,7 @@ Each `rosbag*` generates a same-name session directory under the output path. St
 | 03 | `yolh_pipeline/03_hand_state.py` | `raw.npz`, hand bboxes, mask | `hand_state.npz` |
 | 04 | `yolh_pipeline/04_gripper_action.py` | `hand_state.npz` | `gripper_action.npz` |
 | 05 | `yolh_pipeline/05_point_cloud.py` | `raw.npz`, `masks.npz`, `gripper_action.npz` | `episodes.npz` |
-| 06 | `yolh_pipeline/06_generate_dataset.py` | multiple sessions | `train_dataset.npz` |
-
-`train_dataset.npz` includes at least the following fields:
-
-- `clouds`
-- `actions`
-- `actions_normalized`
-- `trans_min`
-- `trans_max`
-- `max_gripper_width`
-
-These normalization statistics are loaded again in `inference.py` to map policy outputs back to physical units.
+| 06 | `yolh_pipeline/06_generate_dataset.py` | `episodes.npz` | `train_dataset.npz` |
 
 ## Training
 
@@ -109,15 +95,9 @@ Training artifacts:
 - periodic checkpoints: `policy_epoch_*.ckpt`
 - final model: `policy_last.ckpt`
 
-Model implementation lives in `policy/yolh/`. The current training entrypoint uses:
+## Inference and Control
 
-- a sparse 3D encoder
-- a Transformer readout layer
-- an action diffusion decoder
-
-## Online Inference and Control
-
-YOLH online deployment follows a two-machine setup:
+YOLH deployment follows a two-machine setup:
 
 - robot side: capture RGB-D, read joint angles, execute actions
 - inference side: receive observations, build point clouds, run policy, send action chunks
@@ -157,19 +137,3 @@ This mode does not run the policy. It replays actions from FK of current joint a
 - `configs/pipeline.yaml`: per-stage offline pipeline parameters
 - `configs/inference.yaml`: camera intrinsics, camera-to-base extrinsics, workspace, and inference parameters
 - `configs/lerobot.json`: motor IDs, homing offsets, and range calibration
-
-## Scope Boundaries
-
-Focus here for project development:
-
-- `scripts/` and `yolh_pipeline/`: data processing
-- `policy/`: model and inference logic
-- `interface/`: robot interface and communication
-- `dataset/`: training data loading
-
-These directories are mainly vendored dependencies and should generally be left unchanged unless you intentionally patch upstream code:
-
-- `dependencies/`
-- `lerobot/`
-
-Also, `policy/README.md` records attribution and source information for part of the policy code.
