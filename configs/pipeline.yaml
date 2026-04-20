@@ -31,8 +31,8 @@ step01:
   max_gap: 10
 
 step02:
-  sam2_checkpoint: dependencies/sam2/checkpoints/sam2.1_hiera_tiny.pt
-  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+  sam2_checkpoint: dependencies/sam2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
   device: auto
 
 step03:
@@ -44,7 +44,7 @@ step05:
   voxel_size: 0.005
   workspace_min: [-0.5, -0.1, 0.0]
   workspace_max: [0.5, 0.5, 1.0]
-  gripper_offset: [0.05, 0.0, 0.0]
+  gripper_offset: [0.0, 0.0, 0.0]
   gripper_num_points: 1200
   tip_sample_points: 20000
   contact_offset_z: 0.05

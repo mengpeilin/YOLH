@@ -51,24 +51,24 @@ def main():
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # if args.input_format == "rosbag":
-    #     print("############# 00  ros2bag_process ###########")
-    #     step00_script = pipeline_dir / "00_ros2bag_process.py"
-    # else:
-    #     print("############# 00  benchmark_process ###########")
-    #     step00_script = pipeline_dir / "00_benchmark_process.py"
+    if args.input_format == "rosbag":
+        print("############# 00  ros2bag_process ###########")
+        step00_script = pipeline_dir / "00_ros2bag_process.py"
+    else:
+        print("############# 00  benchmark_process ###########")
+        step00_script = pipeline_dir / "00_benchmark_process.py"
 
-    # run(
-    #     conda_run(
-    #         args.phantom_env, step00_script,
-    #         "--input-dir",
-    #         input_dir,
-    #         "--output-dir",
-    #         output_dir,
-    #         "--config",
-    #         config_path,
-    #     )
-    # )
+    run(
+        conda_run(
+            args.phantom_env, step00_script,
+            "--input-dir",
+            input_dir,
+            "--output-dir",
+            output_dir,
+            "--config",
+            config_path,
+        )
+    )
 
     print("############# 01  hand_bbox ###########")
     run(

@@ -165,8 +165,8 @@ def build_parser():
     p.add_argument("--fps", type=int, default=8, help="Playback FPS")
     p.add_argument("--loop", action="store_true", help="Loop playback")
     p.add_argument("--point-size", type=float, default=1.0, help="Scatter point size")
-    p.add_argument("--elev", type=float, default=25.0, help="Camera elevation")
-    p.add_argument("--azim", type=float, default=45.0, help="Camera azimuth")
+    p.add_argument("--elev", type=float, default=270.0, help="Camera elevation")
+    p.add_argument("--azim", type=float, default=90.0, help="Camera azimuth")
     p.add_argument(
         "--no-denorm-colors",
         action="store_true",
