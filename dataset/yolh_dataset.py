@@ -5,6 +5,7 @@ import torch
 import MinkowskiEngine as ME
 import collections.abc as container_abcs
 from torch.utils.data import Dataset
+from scipy.spatial.transform import Rotation
 
 TO_TENSOR_KEYS = [
     "input_coords_list",
@@ -33,9 +34,22 @@ class YolhDataset(Dataset):
         return len(self.clouds)
 
     def __getitem__(self, index):
-        cloud = self.clouds[index]
+        cloud = self.clouds[index].copy()
 
+        # Data augmentation: random translation and rotation
         if len(cloud) > 0:
+            # Random translation: [-0.2m, 0.2m] along X/Y/Z
+            translation = np.random.uniform(-0.2, 0.2, size=(3,))
+            
+            # Random rotation: [-30°, 30°] around X/Y/Z (in radians)
+            angles = np.random.uniform(np.radians(-30), np.radians(30), size=(3,))
+            rotation = Rotation.from_euler('xyz', angles)
+            
+            # Apply transformation to point coordinates
+            coords_3d = cloud[:, :3]
+            coords_3d = rotation.apply(coords_3d) + translation
+            cloud[:, :3] = coords_3d
+            
             voxel_coords = np.ascontiguousarray(
                 cloud[:, :3] / self.voxel_size, dtype=np.int32
             )

@@ -18,7 +18,7 @@ Keyboard controls in playback:
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
 
 
 IMG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -111,7 +111,7 @@ def show_static(clouds, frame, point_size, denorm, elev, azim):
     plt.show()
 
 
-def animate(clouds, point_size, denorm, fps, loop, elev, azim):
+def animate(clouds, point_size, denorm, fps, loop, elev, azim, output_video=None):
     fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111, projection="3d")
     total = len(clouds)
@@ -152,7 +152,41 @@ def animate(clouds, point_size, denorm, fps, loop, elev, azim):
 
     render(0)
     interval_ms = max(1, int(1000 / max(1, fps)))
-    _anim = FuncAnimation(fig, step, interval=interval_ms)
+    _anim = FuncAnimation(
+        fig,
+        step,
+        frames=total,
+        interval=interval_ms,
+        repeat=loop,
+        cache_frame_data=False,
+        save_count=total,
+    )
+    
+    if output_video is not None:
+        print(f"Saving video to {output_video}...")
+        lower_path = output_video.lower()
+        if lower_path.endswith((".mp4", ".mov", ".avi", ".mkv")):
+            if not FFMpegWriter.isAvailable():
+                raise RuntimeError(
+                    "ffmpeg is not available. Install ffmpeg or save as .gif instead."
+                )
+            writer = FFMpegWriter(
+                fps=fps,
+                codec="libx264",
+                extra_args=["-pix_fmt", "yuv420p"],
+            )
+        elif lower_path.endswith(".gif"):
+            writer = PillowWriter(fps=fps)
+        else:
+            raise ValueError(
+                "Unsupported output format. Use .mp4/.mov/.avi/.mkv for ffmpeg or .gif for Pillow."
+            )
+        plt.tight_layout()
+        _anim.save(output_video, writer=writer)
+        print(f"Video saved successfully!")
+        plt.close(fig)
+        return
+    
     plt.tight_layout()
     plt.show()
 
@@ -162,8 +196,9 @@ def build_parser():
     p.add_argument("--npz-path", required=True, help="Path to episodes.npz")
     p.add_argument("--frame", type=int, default=0, help="Frame index in static mode")
     p.add_argument("--play", action="store_true", help="Play all frames")
-    p.add_argument("--fps", type=int, default=8, help="Playback FPS")
+    p.add_argument("--fps", type=int, default=30, help="Playback FPS")
     p.add_argument("--loop", action="store_true", help="Loop playback")
+    p.add_argument("--output-video", type=str, default=None, help="Save video to file (e.g., video.gif or video.mp4)")
     p.add_argument("--point-size", type=float, default=1.0, help="Scatter point size")
     p.add_argument("--elev", type=float, default=270.0, help="Camera elevation")
     p.add_argument("--azim", type=float, default=90.0, help="Camera azimuth")
@@ -189,6 +224,7 @@ def main():
             loop=args.loop,
             elev=args.elev,
             azim=args.azim,
+            output_video=args.output_video,
         )
     else:
         show_static(

@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import MinkowskiEngine as ME
 from tqdm import tqdm
-
+from pathlib import Path
 from dataset.yolh_dataset import YolhDataset, collate_fn
 PROJECT_ROOT = Path(__file__).resolve().parent
 from policy.yolh import YOLH
@@ -103,7 +103,7 @@ def train(args):
             print(f"Resumed from {args.resume_ckpt}")
 
     if RANK == 0:
-        os.makedirs(args.ckpt_dir, exist_ok=True)
+        os.makedirs(args.ckpt, exist_ok=True)
 
     optimizer = torch.optim.AdamW(
         policy.parameters(), lr=args.lr,
@@ -169,15 +169,15 @@ def train(args):
                 torch.save(
                     mod.state_dict(),
                     os.path.join(
-                        args.ckpt_dir,
+                        args.ckpt,
                         f"policy_epoch_{epoch + 1}_seed_{args.seed}.ckpt",
                     ),
                 )
-                plot_history(train_history, epoch, args.ckpt_dir, args.seed)
+                plot_history(train_history, epoch, args.ckpt, args.seed)
 
     if RANK == 0:
         mod = policy.module if WORLD_SIZE > 1 else policy
-        torch.save(mod.state_dict(), os.path.join(args.ckpt_dir, "policy_last.ckpt"))
+        torch.save(mod.state_dict(), os.path.join(args.ckpt, "policy_last.ckpt"))
         print("Training complete.")
 
 def main():
@@ -197,15 +197,15 @@ def main():
     parser.add_argument("--num-decoder-layers", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.1)
 
-    parser.add_argument("--ckpt-dir", type=str, required=True,
+    parser.add_argument("--ckpt", type=str, required=True,
                         help="Directory to save checkpoints")
     parser.add_argument("--resume-ckpt", type=str, default=None)
     parser.add_argument("--resume-epoch", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--batch-size", type=int, default=48)
     parser.add_argument("--num-epochs", type=int, default=300)
-    parser.add_argument("--save-epochs", type=int, default=50)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--save-epochs", type=int, default=30)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--seed", type=int, default=233)
 
     train(parser.parse_args())

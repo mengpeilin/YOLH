@@ -387,8 +387,8 @@ def _get_robotiq_data(urdf_path=None, tip_sample_points=20000, contact_offset_z=
         links["right_outer_finger"], urdf_dir, int(tip_sample_points), contact_rng
     ).astype(np.float64)
 
-    jaw_lower = joints[master_joint]["lower"]
-    jaw_upper = joints[master_joint]["upper"]
+    jaw_upper = joints[master_joint]["lower"]
+    jaw_lower = joints[master_joint]["upper"]
 
     data = {
         "urdf_path": resolved_urdf_path,
@@ -680,7 +680,7 @@ def create_gripper_points(
     position,
     orientation,
     jaw_angle,
-    num_points=1200,
+    num_points=1500,
     gripper_offset=None,
     gripper_type="so101",
     urdf_path=None,

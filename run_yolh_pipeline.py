@@ -51,74 +51,74 @@ def main():
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.input_format == "rosbag":
-        print("############# 00  ros2bag_process ###########")
-        step00_script = pipeline_dir / "00_ros2bag_process.py"
-    else:
-        print("############# 00  benchmark_process ###########")
-        step00_script = pipeline_dir / "00_benchmark_process.py"
+    # if args.input_format == "rosbag":
+    #     print("############# 00  ros2bag_process ###########")
+    #     step00_script = pipeline_dir / "00_ros2bag_process.py"
+    # else:
+    #     print("############# 00  benchmark_process ###########")
+    #     step00_script = pipeline_dir / "00_benchmark_process.py"
 
-    run(
-        conda_run(
-            args.phantom_env, step00_script,
-            "--input-dir",
-            input_dir,
-            "--output-dir",
-            output_dir,
-            "--config",
-            config_path,
-        )
-    )
+    # run(
+    #     conda_run(
+    #         args.phantom_env, step00_script,
+    #         "--input-dir",
+    #         input_dir,
+    #         "--output-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #     )
+    # )
 
-    print("############# 01  hand_bbox ###########")
-    run(
-        conda_run(
-            args.phantom_env,
-            pipeline_dir / "01_hand_bbox.py",
-            "--data-dir",
-            output_dir,
-            "--config",
-            config_path,
-        )
-    )
+    # print("############# 01  hand_bbox ###########")
+    # run(
+    #     conda_run(
+    #         args.phantom_env,
+    #         pipeline_dir / "01_hand_bbox.py",
+    #         "--data-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #     )
+    # )
 
-    print("############# 02  mask_generation ###########")
-    run(
-        conda_run(
-            args.sam2_env,
-            pipeline_dir / "02_mask_generation.py",
-            "--data-dir",
-            output_dir,
-            "--config",
-            config_path,
-        )
-    )
+    # print("############# 02  mask_generation ###########")
+    # run(
+    #     conda_run(
+    #         args.sam2_env,
+    #         pipeline_dir / "02_mask_generation.py",
+    #         "--data-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #     )
+    # )
 
-    print("############# 03  hand_state ###########")
-    run(
-        conda_run(
-            args.phantom_env,
-            pipeline_dir / "03_hand_state.py",
-            "--data-dir",
-            output_dir,
-            "--config",
-            config_path,
-            "--hand-side",
-            args.hand_side,
-        )
-    )
+    # print("############# 03  hand_state ###########")
+    # run(
+    #     conda_run(
+    #         args.phantom_env,
+    #         pipeline_dir / "03_hand_state.py",
+    #         "--data-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #         "--hand-side",
+    #         args.hand_side,
+    #     )
+    # )
 
-    print("############# 04  gripper_action ###########")
-    run(
-        conda_run(
-            args.phantom_env,
-            pipeline_dir / "04_gripper_action.py",
-            "--data-dir",
-            output_dir,
-            "--config",
-            config_path,
-        )
-    )
+    # print("############# 04  gripper_action ###########")
+    # run(
+    #     conda_run(
+    #         args.phantom_env,
+    #         pipeline_dir / "04_gripper_action.py",
+    #         "--data-dir",
+    #         output_dir,
+    #         "--config",
+    #         config_path,
+    #     )
+    # )
 
     print("############# 05  gripper_insertion ###########")
     run([
@@ -130,20 +130,20 @@ def main():
         config_path,
     ])
 
-    print("############# 06  generate_dataset ###########")
-    dataset_path = output_dir / "train_dataset.npz"
-    run([
-        sys.executable,
-        pipeline_dir / "06_generate_dataset.py",
-        "--data-dir",
-        output_dir,
-        "--output-path",
-        dataset_path,
-        "--task-name",
-        args.task_name,
-        "--config",
-        config_path,
-    ])
+    # print("############# 06  generate_dataset ###########")
+    # dataset_path = output_dir / "train_dataset.npz"
+    # run([
+    #     sys.executable,
+    #     pipeline_dir / "06_generate_dataset.py",
+    #     "--data-dir",
+    #     output_dir,
+    #     "--output-path",
+    #     dataset_path,
+    #     "--task-name",
+    #     args.task_name,
+    #     "--config",
+    #     config_path,
+    # ])
 
     print("############# Pipeline complete ###########")
     print(f"Training dataset: {dataset_path}")

@@ -46,7 +46,7 @@ def build_point_clouds(
         if "max_width" in action_data
         else float(ee_widths.max())
     )
-
+    # max_width = 1.0
     # Gripper jaw limits
     gripper = get_gripper_data(
         gripper_type=gripper_type,
@@ -86,6 +86,7 @@ def build_point_clouds(
             ee_pt = ee_pts[i].astype(np.float64)
             ee_ori = ee_oris[i].astype(np.float64)
             w = float(ee_widths[i])
+            w = max(0.4 * max_width, w)
             jaw_angle = width_to_jaw_angle(w, max_width, jaw_lower, jaw_upper)
             g_coords, g_colors = create_gripper_points(
                 ee_pt, ee_ori, jaw_angle,

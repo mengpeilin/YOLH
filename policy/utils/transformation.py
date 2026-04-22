@@ -63,7 +63,30 @@ def rot_z_transform(angle: float, dtype=np.float64) -> np.ndarray:
     return transform
 
 
-def rgbd_to_points(rgb, depth, intrinsic, mask=None):
+def _dilate_mask(mask: np.ndarray, iterations: int = 8) -> np.ndarray:
+    """Expand a binary mask outward using an 8-neighborhood."""
+    mask = np.asarray(mask, dtype=bool)
+    if iterations <= 0 or mask.size == 0:
+        return mask
+
+    dilated = mask
+    for _ in range(iterations):
+        padded = np.pad(dilated, 1, mode="constant", constant_values=False)
+        dilated = (
+            padded[:-2, :-2]
+            | padded[:-2, 1:-1]
+            | padded[:-2, 2:]
+            | padded[1:-1, :-2]
+            | padded[1:-1, 1:-1]
+            | padded[1:-1, 2:]
+            | padded[2:, :-2]
+            | padded[2:, 1:-1]
+            | padded[2:, 2:]
+        )
+    return dilated
+
+
+def rgbd_to_points(rgb, depth, intrinsic, mask=None, mask_dilation_iters: int = 8):
     """Back-project an RGB-D frame into a point cloud."""
     fx, fy, cx, cy = intrinsic
     H, W = depth.shape
@@ -74,7 +97,12 @@ def rgbd_to_points(rgb, depth, intrinsic, mask=None):
 
     # Exclude masked pixels.
     if mask is not None:
-        valid = valid & (~mask)
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != depth.shape:
+            raise ValueError(
+                f"mask shape {mask.shape} does not match depth shape {depth.shape}"
+            )
+        valid &= ~_dilate_mask(mask, iterations=mask_dilation_iters)
 
     z = depth_m[valid]
     x = (u[valid] - cx) * z / fx
@@ -83,11 +111,6 @@ def rgbd_to_points(rgb, depth, intrinsic, mask=None):
     coords = np.stack([x, y, z], axis=-1).astype(np.float32)
     colors = rgb[valid].astype(np.float32) / 255.0
     return coords, colors
-
-
-def rgbd_to_points_masked(rgb, depth, intrinsic, mask):
-    """Compatibility wrapper for masked RGB-D back-projection."""
-    return rgbd_to_points(rgb, depth, intrinsic, mask=mask)
 
 VALID_ROTATION_REPRESENTATIONS = [
     'axis_angle',

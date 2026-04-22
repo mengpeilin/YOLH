@@ -29,7 +29,7 @@ step01:
   threshold: 0.2
   max_jump: 200.0
   max_gap: 10
-  first_frame_only: true  # set to false to run detection on every frame
+  first_frame_only: false  # set to false to run detection on every frame
 
 step02:
   sam2_checkpoint: dependencies/sam2/checkpoints/sam2.1_hiera_large.pt
@@ -43,19 +43,19 @@ step03:
 
 step05:
   voxel_size: 0.005
-  workspace_min: [-0.5, -0.1, 0.0]
-  workspace_max: [0.5, 0.5, 1.0]
-  gripper_type: so101  # options: so101, robotiq_2f85
+  workspace_min: [-0.5, -0.2, 0.0]
+  workspace_max: [0.5, 0.5, 0.9]
+  gripper_type: robotiq_2f85  # options: so101, robotiq_2f85
   gripper_urdf_path: null  # e.g. URDF/robotiq_arg85_description/robots/robotiq_arg85_description.URDF
   gripper_tcp_local: null  # optional override of the TCP in gripper local/base coordinates
   gripper_offset: [0.0, 0.0, 0.0]
-  gripper_num_points: 1200
+  gripper_num_points: 1500
   tip_sample_points: 20000
-  contact_offset_z: 0.05
+  contact_offset_z: 0.000
   z_band: 0.005
 
 step06:
   num_action: 20
-  trans_min: [-0.5, -0.1, 0.0]
-  trans_max: [0.5, 0.5, 1.0]
+  trans_min: [-0.35, -0.35, 0.0]
+  trans_max: [0.35, 0.35, 0.7]
   max_gripper_width: null
